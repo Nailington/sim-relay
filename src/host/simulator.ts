@@ -1,0 +1,285 @@
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import * as grpc from '@grpc/grpc-js';
+import * as protoLoader from '@grpc/proto-loader';
+import type { Inventory, StreamMeta, InputEvent } from '../shared/types';
+import { hidEvents, JpegFramer, jpegDimensions } from './protocol';
+import { HidDispatcher } from './hid';
+
+export const exec = promisify(execFile);
+export const protoPath = () => {
+  const directory = typeof __dirname === 'string' ? __dirname : path.resolve('src/host');
+  return (
+    [
+      path.resolve('src/host/idb.proto'),
+      path.join(directory, '../src/host/idb.proto'),
+      path.join(directory, 'idb.proto'),
+    ].find(existsSync) ?? path.resolve('src/host/idb.proto')
+  );
+};
+// Dynamic gRPC methods are defined by the vendored, wire-compatible protocol.
+export interface CompanionClient extends grpc.Client {
+  describe(
+    request: object,
+    options: grpc.CallOptions,
+    cb: (
+      error: grpc.ServiceError | null,
+      result: {
+        targetDescription: {
+          screenDimensions: {
+            width: string;
+            height: string;
+            widthPoints: string;
+            heightPoints: string;
+            density: number;
+          };
+        };
+      },
+    ) => void,
+  ): void;
+  hid(cb: (error: grpc.ServiceError | null) => void): grpc.ClientWritableStream<object>;
+  videoStream(): grpc.ClientDuplexStream<object, { payload?: { data?: Buffer } }>;
+}
+export function companionDefinition() {
+  return grpc.loadPackageDefinition(
+    protoLoader.loadSync(protoPath(), { longs: String, enums: String, defaults: true }),
+  ) as unknown as { idb: { CompanionService: grpc.ServiceClientConstructor } };
+}
+export function companionExecutable() {
+  return (
+    process.env.IDB_COMPANION_PATH ??
+    ['/opt/homebrew/bin/idb_companion', '/usr/local/bin/idb_companion'].find(existsSync) ??
+    'idb_companion'
+  );
+}
+export class MacSimulator {
+  async run(args: string[], binary = false, stdin?: string): Promise<string | Buffer> {
+    const command = exec('xcrun', ['simctl', ...args], {
+      timeout: 120_000,
+      maxBuffer: 32 * 1024 * 1024,
+      encoding: binary ? 'buffer' : 'utf8',
+      // simctl's pasteboard uses the process locale; SSH sessions may otherwise select Mac Roman.
+      env: { ...process.env, LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' },
+    });
+    if (stdin !== undefined) command.child.stdin?.end(stdin);
+    const result = await command;
+    return result.stdout;
+  }
+  async inventory(): Promise<Inventory> {
+    const list = JSON.parse(String(await this.run(['list', '--json'])));
+    const runtimes = list.runtimes.filter(
+      (r: { identifier: string; isAvailable: boolean }) =>
+        r.isAvailable && r.identifier.includes('.iOS-'),
+    );
+    const runtimeNames = new Map(
+      runtimes.map((r: { identifier: string; name: string }) => [r.identifier, r.name]),
+    );
+    const devices = Object.entries(
+      list.devices as Record<string, Record<string, unknown>[]>,
+    ).flatMap(([runtime, devices]) =>
+      runtimeNames.has(runtime)
+        ? devices
+            .filter((d) => d.isAvailable)
+            .map((d) => ({ ...d, runtime: runtimeNames.get(runtime) }))
+        : [],
+    );
+    return {
+      devices,
+      runtimes,
+      devicetypes: list.devicetypes.filter((d: { productFamily: string }) =>
+        ['iPhone', 'iPad'].includes(d.productFamily),
+      ),
+    } as Inventory;
+  }
+  async session(
+    udid: string,
+    fps: number,
+    frame: (data: Buffer) => void,
+    error: (e: Error) => void,
+    signal?: AbortSignal,
+  ): Promise<SimulatorSession> {
+    return SimulatorSession.open(udid, fps, frame, error, signal);
+  }
+}
+
+export class SimulatorSession {
+  metadata!: StreamMeta;
+  private child?: ChildProcess;
+  private client?: CompanionClient;
+  private hid?: HidDispatcher;
+  private video?: grpc.ClientDuplexStream<object, { payload?: { data?: Buffer } }>;
+  private directory = '';
+  private closed = false;
+  private closing?: Promise<void>;
+  private activeTouch?: { x: number; y: number };
+  private keys = new Set<number>();
+  static async open(
+    udid: string,
+    fps: number,
+    frame: (data: Buffer) => void,
+    onError: (e: Error) => void,
+    signal?: AbortSignal,
+  ) {
+    const session = new SimulatorSession();
+    const abort = () => {
+      void session.close();
+    };
+    signal?.throwIfAborted();
+    try {
+      session.directory = await mkdtemp(path.join(tmpdir(), 'sim-relay-'));
+      signal?.throwIfAborted();
+      signal?.addEventListener('abort', abort, { once: true });
+      const socket = path.join(session.directory, 'idb.sock');
+      session.child = spawn(companionExecutable(), ['--udid', udid, '--grpc-domain-sock', socket], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      await new Promise<void>((resolve, reject) => {
+        let output = '',
+          diagnostics = '';
+        const timeout = setTimeout(
+          () =>
+            finish(
+              new Error(
+                'Input service did not start within 30 seconds. Check idb_companion and Xcode.',
+              ),
+            ),
+          30_000,
+        );
+        const finish = (error?: Error) => {
+          clearTimeout(timeout);
+          error ? reject(error) : resolve();
+        };
+        session.child!.once('error', finish);
+        session.child!.once('exit', (code) =>
+          finish(new Error(`Input service exited (${code}). ${diagnostics.slice(-1200)}`)),
+        );
+        session.child!.stderr!.on('data', (chunk) => {
+          diagnostics = (diagnostics + chunk).slice(-4000);
+        });
+        session.child!.stdout!.on('data', (chunk) => {
+          output += chunk;
+          const lines = output.split('\n');
+          output = lines.pop() ?? '';
+          for (const line of lines) {
+            try {
+              if (JSON.parse(line).grpc_path) finish();
+            } catch {
+              /* diagnostic output */
+            }
+          }
+        });
+      });
+      const Client = companionDefinition().idb.CompanionService;
+      session.client = new Client(
+        `unix:${socket}`,
+        grpc.credentials.createInsecure(),
+      ) as unknown as CompanionClient;
+      session.metadata = await new Promise<StreamMeta>((resolve, reject) =>
+        session.client!.describe({}, { deadline: Date.now() + 15000 }, (error, data) => {
+          if (error) return reject(error);
+          const d = data.targetDescription.screenDimensions;
+          const width = Number(d.width),
+            height = Number(d.height);
+          if (!width || !height)
+            return reject(new Error('The simulator has no active display. Boot it and try again.'));
+          resolve({
+            width,
+            height,
+            widthPoints: Number(d.widthPoints) || width / (d.density || 1),
+            heightPoints: Number(d.heightPoints) || height / (d.density || 1),
+          });
+        }),
+      );
+      session.hid = new HidDispatcher(
+        (done) => session.client!.hid(done),
+        (error) => {
+          if (!session.closed) onError(error);
+        },
+      );
+      session.video = session.client.videoStream();
+      const framer = new JpegFramer();
+      session.video.on('data', (response) => {
+        if (!response.payload?.data) return;
+        try {
+          for (const jpeg of framer.push(response.payload.data)) {
+            const dimensions = jpegDimensions(jpeg);
+            if (
+              dimensions &&
+              (session.metadata.width !== dimensions.width ||
+                session.metadata.height !== dimensions.height)
+            ) {
+              const density = session.metadata.width / session.metadata.widthPoints;
+              session.metadata = {
+                ...dimensions,
+                widthPoints: dimensions.width / density,
+                heightPoints: dimensions.height / density,
+              };
+            }
+            frame(jpeg);
+          }
+        } catch (e) {
+          onError(e as Error);
+        }
+      });
+      session.video.on('error', (error) => {
+        if (!session.closed) onError(error);
+      });
+      session.video.on('end', () => {
+        if (!session.closed)
+          onError(new Error('The simulator stopped streaming. Reconnect to resume.'));
+      });
+      session.child.on('exit', () => {
+        if (!session.closed)
+          onError(new Error('The simulator input service stopped. Reconnect to resume.'));
+      });
+      session.video.write({
+        start: { format: 'MJPEG', fps, compressionQuality: 0.7, scaleFactor: 1 },
+      });
+      return session;
+    } catch (e) {
+      await session.close();
+      throw e;
+    } finally {
+      signal?.removeEventListener('abort', abort);
+    }
+  }
+  input(event: InputEvent) {
+    if (this.closed) return;
+    if (event.type === 'touch') this.activeTouch = event.phase === 'up' ? undefined : event.point;
+    if (event.type === 'key')
+      event.phase === 'down' ? this.keys.add(event.code) : this.keys.delete(event.code);
+    this.hid?.send(hidEvents(event, this.metadata), !this.activeTouch && this.keys.size === 0);
+  }
+  close(): Promise<void> {
+    return (this.closing ??= this.finishClose());
+  }
+  private async finishClose() {
+    if (this.closed) return;
+    if (this.activeTouch) this.input({ type: 'touch', phase: 'up', point: this.activeTouch });
+    for (const code of this.keys) this.input({ type: 'key', code, phase: 'up' });
+    this.closed = true;
+    this.video?.cancel();
+    // Complete the final gesture and drain releases before stopping the owned process.
+    await Promise.race([this.hid?.drain(), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    this.client?.close();
+    if (this.child?.pid && this.child.exitCode === null) {
+      const child = this.child;
+      child.kill('SIGTERM');
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          if (child.exitCode === null) child.kill('SIGKILL');
+          resolve();
+        }, 1000);
+        child.once('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+    if (this.directory) await rm(this.directory, { recursive: true, force: true });
+  }
+}

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <title>Sim Relay</title>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="#9ae8ca"/>
+  <rect x="212" y="150" width="88" height="212" rx="27" stroke="#173e30" stroke-width="21"/>
+  <path d="M243 323h26M171 187a111 111 0 0 0 0 138M341 187a111 111 0 0 1 0 138M126 144a173 173 0 0 0 0 224M386 144a173 173 0 0 1 0 224" stroke="#173e30" stroke-width="19" stroke-linecap="round"/>
+</svg>
