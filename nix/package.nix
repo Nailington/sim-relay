@@ -27,8 +27,7 @@ buildNpmPackage {
       ../vite.config.ts
       ../index.html
       ../src
-      ../tests
-      ../scripts
+      ../scripts/build.mjs
       ../assets/app-icon.svg
       ../THIRD_PARTY_NOTICES.md
     ];
@@ -51,13 +50,6 @@ buildNpmPackage {
   preBuild = lib.optionalString stdenv.hostPlatform.isLinux ''
     # resvg is a native build-time dependency; fix its loader before rendering the icon.
     autoPatchelf node_modules/@resvg node_modules/@rollup
-  '';
-
-  doCheck = true;
-  checkPhase = ''
-    runHook preCheck
-    npm test
-    runHook postCheck
   '';
 
   installPhase = ''

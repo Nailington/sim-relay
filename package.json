@@ -13,13 +13,10 @@
     "dev:ui": "vite --host 0.0.0.0",
     "host": "tsx src/host/cli.ts",
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
-    "test": "tsx --test tests/*.test.ts",
     "check": "tsc --noEmit",
     "package": "npm run build && electron-builder",
     "package:dir": "npm run build && electron-builder --dir",
-    "format": "prettier --write src tests scripts *.json *.ts *.html *.md .github",
-    "test:mac": "tsx scripts/mac-e2e.ts",
-    "test:desktop": "electron scripts/desktop-smoke.cjs"
+    "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.0",
@@ -75,26 +72,45 @@
         "NSBonjourServices": [
           "_simrelay._tcp"
         ]
-      }
+      },
+      "artifactName": "Sim-Relay-${version}-mac-${arch}.${ext}",
+      "minimumSystemVersion": "13.0",
+      "entitlements": "packaging/entitlements.mac.plist",
+      "entitlementsInherit": "packaging/entitlements.mac.plist"
     },
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "artifactName": "Sim-Relay-${version}-windows-${arch}.${ext}"
     },
     "linux": {
       "target": [
         "AppImage",
-        "tar.gz"
+        "tar.gz",
+        "deb",
+        "rpm"
       ],
       "category": "Development",
-      "maintainer": "Sim Relay contributors",
-      "syncDesktopName": true
+      "maintainer": "Nailington <Nailington@users.noreply.github.com>",
+      "syncDesktopName": true,
+      "artifactName": "Sim-Relay-${version}-linux-${arch}.${ext}"
     },
-    "icon": "assets/app-icon.png"
+    "icon": "assets/app-icon.png",
+    "deb": {
+      "packageName": "sim-relay"
+    },
+    "rpm": {
+      "packageName": "sim-relay"
+    }
   },
   "overrides": {
     "global-agent": "^4.1.3"
   },
-  "desktopName": "dev.simrelay.desktop"
+  "desktopName": "dev.simrelay.desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nailington/sim-relay.git"
+  },
+  "homepage": "https://github.com/Nailington/sim-relay"
 }

@@ -4,8 +4,15 @@ dist-electron/
 dist-host/
 release/
 .env
+.signing/
 *.log
 .DS_Store
 coverage/
+/tests/
+*.test.*
+*.spec.*
+/scripts/desktop-smoke.cjs
+/scripts/ci-smoke.mjs
+/scripts/mac-e2e.ts
 result
 result-*

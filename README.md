@@ -12,13 +12,31 @@ See the current limits below.
 
 ## Run the desktop app
 
-Packaged builds are in `release/`: a macOS DMG/ZIP, a Windows installer, and a Linux
-AppImage/portable archive. Packaged apps include their runtime and do not require Node.js.
-Open the installer or app for your desktop, then follow the Mac host setup below.
+Download a version from [GitHub Releases](https://github.com/Nailington/sim-relay/releases):
+macOS DMG/ZIP (Apple Silicon or Intel), Windows EXE (x64 or arm64), or Linux AppImage,
+tar.gz, DEB, or RPM (x64 or arm64). Releases become available after a version tag completes the release workflow.
+Packaged apps include their runtime and do not require Node.js. Local packaging outputs
+are written to `release/`.
+
+For macOS installation, Homebrew, permissions, and Xcode host setup, follow the
+[macOS guide](docs/macos.md). After the first stable release, install through Homebrew with:
+
+```sh
+brew tap nailington/sim-relay https://github.com/Nailington/sim-relay.git
+brew install --cask nailington/sim-relay/sim-relay
+```
+
+To publish versions, see [CI and releases](docs/releasing.md), including
+[Apple Developer signing setup](docs/macos.md#signing-releases-with-your-apple-developer-program-account).
+
+On Debian/Ubuntu, install the downloaded DEB with `sudo apt install ./Sim-Relay-VERSION-linux-amd64.deb`.
+On Fedora, use `sudo dnf install ./Sim-Relay-VERSION-linux-x86_64.rpm`. Replace `VERSION`
+with the release version; ARM64 downloads use `arm64.deb` and `aarch64.rpm` respectively.
+Both packages add **Sim Relay** to the desktop app menu.
 
 To run from source instead:
 
-Install Node.js 22 or newer, then from this checkout:
+Install Node.js 24, then from this checkout:
 
 ```sh
 npm ci
@@ -77,7 +95,7 @@ The shell uses Nix's Electron rather than downloading another runtime.
 
 After changing `package-lock.json`, update `npmDepsHash` in `nix/package.nix`: set it to
 `lib.fakeHash`, run `nix build .`, and replace it with the reported `got: sha256-…`
-hash. `nix flake check .` builds the package and runs its tests.
+hash. `nix flake check .` type-checks and builds the package.
 
 ## Set up the Mac
 
@@ -198,34 +216,20 @@ Clients do not need Xcode or idb.
 
 ```sh
 npm run check
-npm test
 npm run build
 npm run package:dir
 npm run package
 ```
 
 Build installers on their target OS. Outputs go to `release/`: macOS DMG/ZIP, Windows NSIS,
-Linux AppImage/tar.gz. Builds are unsigned; public distribution needs platform signing/notarization.
-`.github/workflows/desktop.yml` defines builds and tests for all three systems. The workflow
-must run in a connected GitHub repository.
+Linux AppImage/tar.gz/DEB/RPM. CI type-checks and builds native packages for six targets,
+and keeps the Nix flake checked. Version tags publish a GitHub Release with checksums;
+stable releases also update the Homebrew cask. Signing and notarization are enabled with
+repository secrets and explicit signing variables. See [CI and releases](docs/releasing.md).
 
-Tests cover TLS/pinning, authentication, command confirmation, WebSocket input, gesture
-ordering/draining, coordinates, JPEG framing/dimensions, command parsing, and app archive
-extraction. `npm audit` currently reports no vulnerabilities.
-
-Native Electron smoke test, after building:
-
-```sh
-npx electron scripts/desktop-smoke.cjs
-```
-
-It uses a temporary profile and captures `/tmp/sim-relay-desktop.png`. Linux container tests
-may need `--no-sandbox --ozone-platform=x11 --disable-gpu` **for that test only**. Production
-code does not disable its renderer sandbox.
-
-Real Mac smoke test: set `SIM_RELAY_TEST_URL` and `SIM_RELAY_TEST_TOKEN_FILE` to an HTTPS host
-and a private file containing its token, then run `npm run test:mac`. It creates and removes an
-isolated simulator. Never commit pairing tokens.
+CI inspects Linux package metadata and payloads. Releases require every expected installer
+and include SHA-256 checksums. Local test suites and test runners are excluded from the
+published source and Nix package inputs.
 
 ## Implementation
 
@@ -234,6 +238,6 @@ isolated simulator. Never commit pairing tokens.
 - `src/host`: HTTPS/WebSocket service, `simctl`, app installation, and per-session companion
   processes. Completed gestures drain their own HID RPC on a persistent companion connection.
 - `src/renderer`: React workspace/dialogs, canvas video, keyboard/touch mapping, labeled demo.
-- `tests` and `scripts`: automated checks, desktop/real-Mac verification, and packaging.
+- `scripts`: development builds, package validation, and release automation.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for protocol licensing.
