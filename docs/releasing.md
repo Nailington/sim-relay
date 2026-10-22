@@ -53,8 +53,8 @@ after fixing permissions or a non-fast-forward push.
    npm version 0.2.0 --no-git-tag-version
    ```
 
-   Choose the intended version; `0.2.0` is an example. For the initial release, the repository
-   already uses `0.1.0` and no version bump is needed.
+   Choose the intended version; `0.2.0` is an example. The tag must match the version in
+   `package.json`.
 
 2. Update `npmDepsHash` in `nix/package.nix` whenever the lockfile changes. Temporarily set
    it to `lib.fakeHash`, build the flake, and copy the reported actual hash. Stage new source

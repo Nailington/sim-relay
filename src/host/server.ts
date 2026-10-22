@@ -1,4 +1,5 @@
 import https from 'node:https';
+import packageMetadata from '../../package.json';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { hostname, networkInterfaces, platform } from 'node:os';
 import { Bonjour } from 'bonjour-service';
@@ -66,7 +67,7 @@ export async function startHost(options: {
   const info: HostInfo = options.info ?? {
     name: hostname().replace(/\.local$/, ''),
     platform: 'macOS',
-    version: '0.1.0',
+    version: packageMetadata.version,
     xcode: await exec('xcrun', ['simctl', 'help'], { timeout: 10000 })
       .then(() => true)
       .catch(() => false),
