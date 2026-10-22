@@ -38,15 +38,11 @@ runtime. The Linux package includes a desktop menu entry; the macOS package incl
 `Applications/Sim Relay.app`. Nix builds are verified on x86_64 Linux; the other Nix targets
 still need native build/runtime validation. The pinned nixpkgs no longer supports Intel macOS.
 
-Add this checkout as an input to your flake:
+Add the GitHub repository as an input to your flake:
 
 ```nix
-inputs.sim-relay.url = "path:/absolute/path/to/ios-sim-stream";
+inputs.sim-relay.url = "github:Nailington/sim-relay";
 ```
-
-Once the repository is published, replace that URL with its `git+https://…` or
-`github:owner/repository` URL. Commit the source, `flake.nix`, `flake.lock`, and `nix/` before
-consuming it through Git: Nix excludes untracked files from Git flakes.
 
 Then include the package in a NixOS module (with `inputs` passed through `specialArgs`):
 
@@ -63,20 +59,20 @@ For Home Manager, use the same package in `home.packages` and pass `inputs` thro
 `extraSpecialArgs`. Alternatively, add `inputs.sim-relay.overlays.default` to
 `nixpkgs.overlays` and install `pkgs.sim-relay`. The overlay uses your nixpkgs; the direct
 package uses this project's pinned nixpkgs. You may set
-`inputs.sim-relay.inputs.nixpkgs.follows = "nixpkgs"` to share your pin, provided it has a
+`inputs.sim-relay.inputs.nixpkgs.follows = "nixpkgs"` to share your pin, provided it has
 Electron 43 or newer and Node.js 24.
 
-From a checkout with the source and Nix files tracked by Git, build or launch without installing:
+Build or launch directly from GitHub without installing:
 
 ```sh
-nix build .
-nix run .
+nix build github:Nailington/sim-relay
+nix run github:Nailington/sim-relay
 # On a Mac with Xcode and idb_companion installed:
 ./result/bin/sim-relay-host
 ```
 
 The host still requires the Mac setup below; Nix does not install Xcode or iOS runtimes.
-For development, run `nix develop .`, then `npm ci` and `npm run dev`.
+For development in a local checkout, run `nix develop .`, then `npm ci` and `npm run dev`.
 The shell uses Nix's Electron rather than downloading another runtime.
 
 After changing `package-lock.json`, update `npmDepsHash` in `nix/package.nix`: set it to
