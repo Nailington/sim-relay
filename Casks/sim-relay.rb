@@ -2,9 +2,9 @@
 cask "sim-relay" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.1.3"
-  sha256 arm:   "159499ae3c86b6384dec7869b855df421340949be9b190623fcaea2ab38a261b",
-         intel: "3b84236c9210116033b047410474350887e5f7735c3cc2ba144a2271310ba607"
+  version "0.1.4"
+  sha256 arm:   "8dae51828fbd9cda93c134c6173cbfc058858e0a7a60bf69b4f60aeaef0bccf4",
+         intel: "9c891508288c6996aa7a3c2b6e3740dde7b24c84ad74f5c10c1f00d9f2de6809"
 
   url "https://github.com/Nailington/sim-relay/releases/download/v#{version}/Sim-Relay-#{version}-mac-#{arch}.dmg"
   name "Sim Relay"
