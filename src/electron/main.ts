@@ -5,7 +5,8 @@ import { randomUUID, X509Certificate } from 'node:crypto';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { hostUrl, probeHost, remoteRequest, tlsOptions } from './remote';
+import { hostname } from 'node:os';
+import { hostUrl, probeHost, remoteRequest, tlsOptions, pairRemoteClient } from './remote';
 import { startHost } from '../host/server';
 import { installHostCommand } from './host-command';
 import { inputSchema } from '../host/protocol';
@@ -121,7 +122,7 @@ async function main() {
     )
       throw new Error('Check the certificate and pairing token.');
     const previous = [...profiles.values()].find((p) => p.url === probe.url);
-    const entry: Profile = {
+    let entry: Profile = {
       id: previous?.id ?? randomUUID(),
       name: probe.info.name,
       url: probe.url,
@@ -130,7 +131,7 @@ async function main() {
       token: token.trim(),
       source: 'saved',
     };
-    await remoteRequest(entry, 'GET', '/devices');
+    entry = await pairRemoteClient(entry, probe, `${hostname()} (${process.platform})`);
     profiles.set(entry.id, entry);
     entry.sessionOnly = !(await saveProfiles());
     return publicProfile(entry);
