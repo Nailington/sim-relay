@@ -15,8 +15,12 @@ sim-relay-host revoke CLIENT_ID
 Copy the exact client ID from `clients`. Revocation disconnects all of that client's live
 displays, releases their input/capture sessions, and prevents its credential from reconnecting.
 Other clients remain authorized and connected. A revoked client must obtain a new code from
-the Mac's owner and pair again. Commands already accepted by the Mac may finish; revocation
-does not undo simulator operations or shut down the simulator.
+the Mac's owner and pair again. Pending uploads are disconnected, and requests still reading
+inventory or extracting an app cannot dispatch a simulator operation after revocation.
+Operations already dispatched to the simulator may finish; revocation does not undo them or
+shut down the simulator. All matching streams stop input and close before their cleanup is
+awaited concurrently. The administrator command waits at most one second for session cleanup;
+a stalled session keeps its simulator lease until cleanup finishes.
 
 `clients` shows pairing time, last observed activity (updated during this host run and saved
 with authorization changes), and active display count. Credential values and hashes are
@@ -64,7 +68,8 @@ permissions `0600`. There is no network administrator endpoint. A process runnin
 same Mac user can administer the host, just as it can operate that user's simulator directly.
 Do not share the state directory or run multiple hosts against the same directory.
 
-Automated tests exercise two simultaneous fake-backend simulator sessions over pinned TLS,
-revoke one client, verify its capture cleanup and rejected credential, and keep the second
-client's input working. Actual macOS Simulator and OS-keychain behavior still require native
-platform verification.
+Automated tests exercise delayed uploads, revocation during inventory and archive preparation,
+and multiple fake-backend streams over pinned TLS/WSS. They verify that stalled or failed
+cleanup cannot keep another revoked stream active, that extracted app directories are removed,
+and that another client's input keeps working. Actual macOS Simulator and OS-keychain behavior
+still require native platform verification.
