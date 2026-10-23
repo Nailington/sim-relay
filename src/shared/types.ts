@@ -93,6 +93,10 @@ export interface HostStatus {
   addresses?: string[];
 }
 export interface DesktopApi {
+  workspace?: {
+    restore(): { hostId?: string; deviceId?: string; fps?: number };
+    save(value: { hostId?: string; deviceId?: string; fps?: number }): void;
+  };
   copyText(text: string): Promise<void>;
   hosts(): Promise<HostEntry[]>;
   probe(url: string): Promise<Probe>;

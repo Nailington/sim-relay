@@ -7,6 +7,10 @@ on macOS, Windows, and Linux. The Mac runs Xcode's actual iOS Simulator; clients
 framebuffer and send native input over an encrypted connection. No cloud account or physical
 iPhone is required.
 
+For devices without the desktop app, run an authenticated [self-hosted browser service](docs/browser-hosting.md)
+with `npm run web` after building. Each browser keeps its own saved Macs and workspace;
+the hosting service relays pinned, authenticated connections to allowlisted Mac hosts.
+
 This is a working first version, **not yet complete parity with the native Mac Simulator**.
 See the current limits below.
 

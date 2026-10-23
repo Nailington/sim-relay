@@ -12,6 +12,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:ui": "vite --host 0.0.0.0",
     "host": "tsx src/host/cli.ts",
+    "web": "tsx src/web/cli.ts",
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "check": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.*",

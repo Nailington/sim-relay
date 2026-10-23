@@ -75,6 +75,44 @@ export function App() {
   currentHost.current = host?.id;
   const connectionAttempt = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
+  const restoredWorkspace = useRef(false);
+  useEffect(() => {
+    if (!api?.workspace || restoredWorkspace.current) return;
+    restoredWorkspace.current = true;
+    const saved = api.workspace.restore();
+    let cancelled = false;
+    void api
+      .hosts()
+      .then(async (entries) => {
+        const entry = entries.find((candidate) => candidate.id === saved.hostId);
+        if (!entry) return;
+        const value = await api.request<Inventory>(entry.id, 'GET', '/devices');
+        if (cancelled) return;
+        setHost(entry);
+        setInventory(value);
+        setSelectedId(
+          value.devices.some((device) => device.udid === saved.deviceId)
+            ? saved.deviceId!
+            : (value.devices[0]?.udid ?? ''),
+        );
+        if ([15, 30, 60].includes(saved.fps ?? 0)) setTargetFps(saved.fps!);
+      })
+      .catch((failure: Error) => {
+        if (!cancelled) setError(failure.message);
+      });
+    return () => {
+      cancelled = true;
+      restoredWorkspace.current = false;
+    };
+  }, [api]);
+  useEffect(() => {
+    if (!api?.workspace || !host) return;
+    try {
+      api.workspace.save({ hostId: host.id, deviceId: selectedId, fps: targetFps });
+    } catch {
+      setError('Browser preferences could not be saved. Allow storage for this site.');
+    }
+  }, [api, host, selectedId, targetFps]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && host) {
