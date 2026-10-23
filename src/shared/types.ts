@@ -111,6 +111,8 @@ export interface HostStatus {
   addresses?: string[];
 }
 export interface DesktopApi {
+  diagnostics?(hostId?: string): Promise<import('./diagnostics').DiagnosticReport>;
+  exportDiagnostics?(report: import('./diagnostics').DiagnosticReport): Promise<boolean>;
   copyText(text: string): Promise<void>;
   hosts(): Promise<HostEntry[]>;
   probe(url: string): Promise<Probe>;

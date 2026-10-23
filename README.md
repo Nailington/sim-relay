@@ -115,7 +115,7 @@ requires compatible macOS and Xcode versions; older Intel/Xcode combinations are
 The host searches `/opt/homebrew/bin`, `/usr/local/bin`, and `PATH`. Set `IDB_COMPANION_PATH` for
 a custom installation.
 
-In the desktop app on the Mac, select **Set up a Mac host → Start sharing**. Alternatively,
+In the desktop app on the Mac, select **Share this Mac → Start sharing**. Alternatively,
 start the bundled command from Terminal:
 
 ```sh
@@ -162,6 +162,14 @@ ssh -N -L 49300:127.0.0.1:49300 user@your-mac
 Connect to `https://127.0.0.1:49300` using the same Mac fingerprint and token. Loopback-only
 hosts are not advertised through Bonjour.
 
+## Workspace and diagnostics
+
+Choose a Mac and simulator in the left rail, then select **Start & connect**. The display
+uses the remaining window height; hide its controls or expand the display from the toolbar.
+**Diagnostics** checks connection stages and host setup, including when the Mac is unreachable.
+Review the redacted report before saving it locally. See the [workspace and diagnostics guide](docs/workspace-and-diagnostics.md)
+for the cleanup inventory, report contents, and validation limits.
+
 ## Controls
 
 - Click, double-click, drag, and click-and-hold send native touch input. Coordinates map to
@@ -178,7 +186,7 @@ hosts are not advertised through Bonjour.
   `ditto -c -k --keepParent MyApp.app MyApp.app.zip`. Limits: 128 MB compressed, 512 MB expanded,
   20,000 files. Archive symlinks become regular files. Install bundles that require symlinks
   directly from the Mac filesystem using the command panel.
-- **Command panel** (Ctrl+K / Cmd+K) runs `simctl` arguments directly, without a shell.
+- **Command** (Ctrl+K / Cmd+K) runs `simctl` arguments directly, without a shell.
   `$DEVICE` means the selected simulator. Launch/uninstall apps, send notifications, change
   permissions, import media, or use other finite `simctl` operations. Paths refer to the Mac.
   Erase/delete commands require a checkbox. Commands time out after two minutes.

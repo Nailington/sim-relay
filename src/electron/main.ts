@@ -9,6 +9,8 @@ import { hostname } from 'node:os';
 import { hostUrl, probeHost, remoteRequest, tlsOptions, pairRemoteClient } from './remote';
 import { startHost } from '../host/server';
 import { installHostCommand } from './host-command';
+import { createDiagnostics } from './diagnostics';
+import { serializeReport, type DiagnosticStage } from '../shared/diagnostics';
 import { inputSchema } from '../host/protocol';
 import { RelaySession, SessionFailure, SessionRouter } from './session';
 import { parseHostInfo } from '../shared/host-info';
@@ -39,6 +41,26 @@ const profile = (id: string) => {
   if (!result) throw new Error('Pair with this Mac first.');
   return result;
 };
+const diagnostics = createDiagnostics({
+  version: app.getVersion(),
+  platform: process.platform,
+  profile,
+  probe: probeHost,
+  inventory: async (entry) =>
+    JSON.parse((await remoteRequest(entry, 'GET', '/devices', undefined, 10000)).toString()),
+});
+function actionStage(channel: string, args: unknown[]): DiagnosticStage | undefined {
+  if (channel === 'probe') return 'network';
+  if (['save-screenshot', 'install-app'].includes(channel)) return 'action';
+  if (channel === 'pair') return 'authentication';
+  if (channel === 'connect') return 'stream';
+  if (channel === 'request')
+    return String(args[2]).endsWith('/boot')
+      ? 'boot'
+      : args[2] === '/devices' && args[1] === 'GET'
+        ? 'runtimes'
+        : 'action';
+}
 async function saveProfiles() {
   if (!secureStorageAvailable) return false;
   try {
@@ -64,11 +86,24 @@ function disconnect(owner: BrowserWindow) {
   sessions.get(owner.id)?.disconnect();
 }
 function handle(channel: string, fn: (...args: any[]) => unknown, withWindow = false) {
-  ipcMain.handle(channel, (event, ...args) => {
+  ipcMain.handle(channel, async (event, ...args) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     if (!owner || !windows.has(owner.id) || event.senderFrame !== owner.webContents.mainFrame)
       throw new Error('Unknown app window.');
-    return withWindow ? fn(owner, ...args) : fn(...args);
+    const stage = actionStage(channel, args);
+    const hostId =
+      ['connect', 'request', 'save-screenshot', 'install-app'].includes(channel) &&
+      typeof args[0] === 'string'
+        ? args[0]
+        : undefined;
+    try {
+      const result = await (withWindow ? fn(owner, ...args) : fn(...args));
+      if (stage) diagnostics.record(stage, 'passed', hostId);
+      return result;
+    } catch (error) {
+      if (stage) diagnostics.failure(error, stage, hostId);
+      throw error;
+    }
   });
 }
 function sessionFor(owner: BrowserWindow) {
@@ -85,7 +120,14 @@ function sessionFor(owner: BrowserWindow) {
   };
   session = new RelaySession({
     frame: (data) => send('frame', data),
-    notice: (notice) => send('notice', notice),
+    notice: (notice) => {
+      const hostId = session?.target?.hostId;
+      if (notice.type === 'status' && notice.state === 'live')
+        diagnostics.record('stream', 'passed', hostId);
+      if ((notice.type === 'status' && notice.state === 'failed') || notice.type === 'error')
+        diagnostics.failure(notice.message, 'stream', hostId);
+      send('notice', notice);
+    },
     open: async ({ hostId, udid, fps }, signal) => {
       const p = profile(hostId);
       parseHostInfo(
@@ -273,6 +315,27 @@ async function main() {
       ),
   );
   handle('probe', probeHost);
+  handle('diagnostics', (id?: string) => {
+    if (id !== undefined && (typeof id !== 'string' || id.length > 1024))
+      throw new Error('Choose a paired Mac.');
+    return diagnostics.refresh(id);
+  });
+  handle(
+    'export-diagnostics',
+    async (owner: BrowserWindow, report: unknown) => {
+      // Revalidate the reviewed report in the main process. No arbitrary text/files.
+      const text = serializeReport(report);
+      const result = await dialog.showSaveDialog(owner, {
+        title: 'Save reviewed diagnostic report',
+        defaultPath: 'Sim-Relay-diagnostics.json',
+        filters: [{ name: 'Diagnostic report', extensions: ['json'] }],
+      });
+      if (result.canceled || !result.filePath) return false;
+      await writeFile(result.filePath, text, { mode: 0o600 });
+      return true;
+    },
+    true,
+  );
   handle('copy-text', (text: string) => {
     if (typeof text !== 'string' || text.length > 1000000)
       throw new Error('Text is too large to copy.');

@@ -80,6 +80,7 @@ export async function remoteRequest(
   method: string,
   pathname: string,
   body?: unknown,
+  timeoutOrSignal: number | AbortSignal = method === 'GET' ? 15000 : 130000,
   signal?: AbortSignal,
 ): Promise<Buffer> {
   if (
@@ -98,8 +99,9 @@ export async function remoteRequest(
       {
         method,
         ...tlsOptions(profile),
-        timeout: method === 'GET' ? 15000 : 130000,
-        signal,
+        timeout:
+          typeof timeoutOrSignal === 'number' ? timeoutOrSignal : method === 'GET' ? 15000 : 130000,
+        signal: typeof timeoutOrSignal === 'number' ? signal : timeoutOrSignal,
         headers: {
           Authorization: `Bearer ${profile.token}`,
           ...(encoded
