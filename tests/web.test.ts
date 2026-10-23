@@ -5,6 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { once } from 'node:events';
+import http from 'node:http';
 import { WebSocket } from 'ws';
 import { startHost, type Backend } from '../src/host/server';
 import { startWeb } from '../src/web/server';
@@ -63,6 +64,20 @@ test(
         body: JSON.stringify(value),
       });
     try {
+      const malformed = await new Promise<number>((resolve, reject) => {
+        const request = http.request(web.origin, { path: '//%' }, (response) => {
+          response.resume();
+          resolve(response.statusCode!);
+        });
+        request.on('error', reject);
+        request.end();
+      });
+      assert.equal(malformed, 400);
+      assert.equal(
+        (await fetch(web.origin + '/api/session')).status,
+        401,
+        'service survives malformed request targets',
+      );
       assert.equal((await post('probe', { url: mac })).status, 401);
       assert.equal(
         (

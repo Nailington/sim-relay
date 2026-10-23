@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { App } from './App';
-import { browserStorageKey, createBrowserApi, webCall } from './browser-api';
+import { clearBrowserWorkspace, createBrowserApi, webCall } from './browser-api';
 import './browser.css';
 
 export function BrowserGate() {
@@ -125,11 +125,15 @@ export function BrowserGate() {
           </p>
           <button
             onClick={() => {
-              void window.relay?.disconnect().then(() => {
-                localStorage.removeItem(browserStorageKey(user));
-                localStorage.removeItem(browserStorageKey(user) + '.preferences');
-                location.reload();
-              });
+              void window.relay
+                ?.disconnect()
+                .then(() => clearBrowserWorkspace(user))
+                .then(() => location.reload())
+                .catch(() =>
+                  setError(
+                    'Browser storage could not be cleared. Clear this site’s data in your browser settings.',
+                  ),
+                );
             }}
           >
             Clear this browser’s setup

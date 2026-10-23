@@ -76,10 +76,12 @@ export function App() {
   const connectionAttempt = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
   const restoredWorkspace = useRef(false);
+  const selectionGeneration = useRef(0);
   useEffect(() => {
     if (!api?.workspace || restoredWorkspace.current) return;
     restoredWorkspace.current = true;
     const saved = api.workspace.restore();
+    const selection = selectionGeneration.current;
     let cancelled = false;
     void api
       .hosts()
@@ -87,7 +89,7 @@ export function App() {
         const entry = entries.find((candidate) => candidate.id === saved.hostId);
         if (!entry) return;
         const value = await api.request<Inventory>(entry.id, 'GET', '/devices');
-        if (cancelled) return;
+        if (cancelled || selection !== selectionGeneration.current) return;
         setHost(entry);
         setInventory(value);
         setSelectedId(
@@ -98,7 +100,7 @@ export function App() {
         if ([15, 30, 60].includes(saved.fps ?? 0)) setTargetFps(saved.fps!);
       })
       .catch((failure: Error) => {
-        if (!cancelled) setError(failure.message);
+        if (!cancelled && selection === selectionGeneration.current) setError(failure.message);
       });
     return () => {
       cancelled = true;
@@ -184,6 +186,7 @@ export function App() {
     return value;
   };
   const stopStream = async () => {
+    selectionGeneration.current++;
     connectionAttempt.current++;
     await api?.disconnect();
     setStream('off');
@@ -192,6 +195,7 @@ export function App() {
   };
   const chooseHost = async (entry: HostEntry) => {
     if (busy) return;
+    selectionGeneration.current++;
     if (entry.source === 'discovered') {
       setPairUrl(entry.url);
       setModal('pair');

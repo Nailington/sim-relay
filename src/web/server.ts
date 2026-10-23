@@ -128,9 +128,9 @@ export async function startWeb(options: WebOptions) {
     );
     if (!validHost(request))
       return json(response, 403, { error: 'Open the configured public URL for this deployment.' });
-    const pathname = new URL(request.url ?? '/', origin).pathname;
-    const current = session(request);
     try {
+      const pathname = new URL(request.url ?? '/', origin).pathname;
+      const current = session(request);
       if (pathname === '/api/session' && request.method === 'GET')
         return json(response, current ? 200 : 401, { mode: 'web', user: current?.user });
       if (request.method === 'POST' && !sameOrigin(request))

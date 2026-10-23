@@ -8,6 +8,17 @@ import type {
 } from '../shared/types';
 
 export const browserStorageKey = (user: string) => `sim-relay.web.v1.${encodeURIComponent(user)}`;
+async function storageMutation<T>(key: string, action: () => T): Promise<T> {
+  if (navigator.locks) return navigator.locks.request(key, action);
+  return action();
+}
+export async function clearBrowserWorkspace(user: string): Promise<void> {
+  const key = browserStorageKey(user);
+  await storageMutation(key, () => {
+    localStorage.removeItem(key);
+    localStorage.removeItem(key + '.preferences');
+  });
+}
 export async function webCall<T>(action: string, data?: unknown): Promise<T> {
   const response = await fetch(`/api/${action}`, {
     method: 'POST',
@@ -40,14 +51,26 @@ function download(data: Blob, filename: string) {
 /** One transport per tab; saved profiles are local to this signed-in user and browser. */
 export function createBrowserApi(user: string): DesktopApi {
   const key = browserStorageKey(user);
-  let profiles: Profile[] = [];
-  try {
-    profiles = JSON.parse(localStorage.getItem(key) ?? '[]');
-    if (!Array.isArray(profiles)) profiles = [];
-  } catch {
-    profiles = [];
-  }
-  const save = () => {
+  const readProfiles = (): Profile[] => {
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
+      if (!Array.isArray(value)) return [];
+      return value.filter(
+        (entry): entry is Profile =>
+          entry &&
+          typeof entry.id === 'string' &&
+          typeof entry.name === 'string' &&
+          typeof entry.url === 'string' &&
+          typeof entry.token === 'string' &&
+          typeof entry.certificate === 'string' &&
+          typeof entry.fingerprint === 'string' &&
+          entry.source === 'saved',
+      );
+    } catch {
+      return [];
+    }
+  };
+  const save = (profiles: Profile[]) => {
     try {
       localStorage.setItem(key, JSON.stringify(profiles));
     } catch {
@@ -57,12 +80,13 @@ export function createBrowserApi(user: string): DesktopApi {
     }
   };
   const get = (id: string) => {
-    const value = profiles.find((profile) => profile.id === id);
+    const value = readProfiles().find((profile) => profile.id === id);
     if (!value) throw new Error('Pair with this Mac in this browser first.');
     return value;
   };
   let socket: WebSocket | undefined,
     generation = 0;
+  let connectedProfile: Profile | undefined;
   const frames = new Set<(frame: Uint8Array) => void>();
   const notices = new Set<(notice: StreamNotice) => void>();
   const notify = (notice: StreamNotice) => {
@@ -72,6 +96,7 @@ export function createBrowserApi(user: string): DesktopApi {
     generation++;
     const old = socket;
     socket = undefined;
+    connectedProfile = undefined;
     old?.close();
     notify({ type: 'closed' });
   };
@@ -92,7 +117,13 @@ export function createBrowserApi(user: string): DesktopApi {
     workspace: {
       restore: () => {
         try {
-          return JSON.parse(localStorage.getItem(key + '.preferences') ?? '{}');
+          const value = JSON.parse(localStorage.getItem(key + '.preferences') ?? '{}');
+          if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+          return {
+            hostId: typeof value.hostId === 'string' ? value.hostId : undefined,
+            deviceId: typeof value.deviceId === 'string' ? value.deviceId : undefined,
+            fps: [15, 30, 60].includes(value.fps) ? value.fps : undefined,
+          };
         } catch {
           return {};
         }
@@ -103,10 +134,10 @@ export function createBrowserApi(user: string): DesktopApi {
     },
     platform: 'web',
     copyText: (text) => navigator.clipboard.writeText(text),
-    hosts: async () => profiles.map(publicProfile),
+    hosts: async () => readProfiles().map(publicProfile),
     probe: (url) => webCall<Probe>('probe', { url }),
     pair: async (probe, token) => {
-      const previous = profiles.find((profile) => profile.url === probe.url);
+      const previous = readProfiles().find((profile) => profile.url === probe.url);
       const proposed: Profile = {
         id: previous?.id ?? crypto.randomUUID(),
         name: probe.info.name,
@@ -117,25 +148,25 @@ export function createBrowserApi(user: string): DesktopApi {
         source: 'saved',
       };
       const paired = await webCall<Profile>('pair', { profile: proposed });
-      const old = profiles;
-      profiles = profiles.filter((profile) => profile.id !== paired.id).concat(paired);
-      try {
-        save();
-      } catch (error) {
-        profiles = old;
-        throw error;
-      }
+      // Reconcile after the asynchronous exchange: another tab may have reset or changed storage.
+      await storageMutation(key, () =>
+        save(
+          readProfiles()
+            .filter((profile) => profile.id !== paired.id)
+            .concat(paired),
+        ),
+      );
       return publicProfile(paired);
     },
     forget: async (id) => {
-      await disconnect();
-      profiles = profiles.filter((profile) => profile.id !== id);
-      save();
+      if (connectedProfile?.id === id) await disconnect();
+      await storageMutation(key, () => save(readProfiles().filter((profile) => profile.id !== id)));
     },
     request: (id, method, path, body) =>
       webCall('request', { profile: get(id), method, path, body }),
     connect: async (id, udid, fps) => {
       await disconnect();
+      connectedProfile = get(id);
       const attempt = ++generation;
       const url = new URL('/api/stream', location.href);
       url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -148,7 +179,8 @@ export function createBrowserApi(user: string): DesktopApi {
           reject(new Error('The Mac did not start streaming. Check its connection and retry.'));
         }, 20_000);
         let started = false;
-        current.onopen = () => current.send(JSON.stringify({ profile: get(id), udid, fps }));
+        current.onopen = () =>
+          current.send(JSON.stringify({ profile: connectedProfile, udid, fps }));
         current.onmessage = (event) => {
           if (generation !== attempt || socket !== current) return;
           if (typeof event.data !== 'string') {
@@ -188,6 +220,7 @@ export function createBrowserApi(user: string): DesktopApi {
             );
           if (socket === current) {
             socket = undefined;
+            connectedProfile = undefined;
             notify({ type: 'closed' });
           }
         };
@@ -252,6 +285,23 @@ export function createBrowserApi(user: string): DesktopApi {
     if (document.visibilityState === 'hidden') void disconnect();
   };
   document.addEventListener('visibilitychange', release);
+  window.addEventListener('storage', (event) => {
+    if (event.key !== null && event.key !== key) return;
+    if (!connectedProfile) return;
+    const current = readProfiles().find((entry) => entry.id === connectedProfile!.id);
+    if (
+      !current ||
+      current.token !== connectedProfile.token ||
+      current.fingerprint !== connectedProfile.fingerprint
+    ) {
+      void disconnect();
+      notify({
+        type: 'error',
+        message:
+          'This browser’s saved pairing changed in another tab. Select a saved Mac or pair again.',
+      });
+    }
+  });
   window.addEventListener('pagehide', () => void disconnect(), { once: true });
   return api;
 }
