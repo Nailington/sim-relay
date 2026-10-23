@@ -51,7 +51,16 @@ async function fixture(overrides: Partial<Backend> = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), 'relay-authorization-'));
   const commands: string[][] = [];
   const backend: Backend = {
-    inventory: async () => ({ devices: [], runtimes: [], devicetypes: [] }),
+    inventory: async () => ({
+      devices: devices.map((udid) => ({
+        udid,
+        name: 'Authorization test simulator',
+        state: 'Booted',
+        runtime: 'iOS fake',
+      })),
+      runtimes: [],
+      devicetypes: [],
+    }),
     run: async (args) => {
       commands.push(args);
       return '';

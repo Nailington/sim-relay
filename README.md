@@ -269,3 +269,5 @@ published source and Nix package inputs.
 - `scripts`: development builds, package validation, and release automation.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for protocol licensing.
+
+For independent display windows, automatic recovery, gesture capabilities, and platform validation notes, see [Display sessions](docs/display-sessions.md).

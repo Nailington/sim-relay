@@ -18,9 +18,10 @@ test('TLS host: pairing, certificate pinning, lifecycle, command confirmation, a
     inputs: InputEvent[] = [];
   const clipboard: string[] = [];
   let released = false;
+  let deviceState = 'Shutdown';
   const backend: Backend = {
     inventory: async () => ({
-      devices: [{ udid, name: 'Test iPhone', state: 'Shutdown', runtime: 'iOS 26' }],
+      devices: [{ udid, name: 'Test iPhone', state: deviceState, runtime: 'iOS 26' }],
       runtimes: [
         {
           identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-0',
@@ -35,6 +36,8 @@ test('TLS host: pairing, certificate pinning, lifecycle, command confirmation, a
     }),
     run: async (args, binary, stdin) => {
       commands.push(args);
+      if (args[0] === 'boot') deviceState = 'Booted';
+      if (args[0] === 'shutdown') deviceState = 'Shutdown';
       if (stdin !== undefined) clipboard.push(stdin);
       if (args[0] === 'install')
         assert.equal(await readFile(path.join(args[2], 'Info.plist'), 'utf8'), 'fixture');

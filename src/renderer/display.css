@@ -1,0 +1,190 @@
+/* The live surface owns its exact aspect ratio; surrounding space belongs to the workspace. */
+.device-stage.relay-stage {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.relay-screen {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+.relay-screen canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+.relay-screen canvas:focus-visible {
+  outline: 2px solid #9acaac;
+  outline-offset: -2px;
+}
+.display-window {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #101214;
+  color: #e1e7e3;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.display-toolbar {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #343e36;
+  background: #1b231e;
+}
+.display-identity {
+  flex: 1 1 180px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+}
+.display-identity strong,
+.display-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.display-identity span {
+  font-size: 11px;
+  color: #a6b2aa;
+}
+.display-toolbar-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.display-menu {
+  position: static;
+  font-size: 12px;
+}
+.display-menu summary {
+  padding: 8px;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.display-menu summary:hover,
+.display-menu[open] summary {
+  background: #303c34;
+}
+.display-menu > div {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: 260px;
+  max-height: calc(100dvh - 130px);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid #526458;
+  border-radius: 7px;
+  background: #202a24;
+  box-shadow: 0 5px 18px #0009;
+}
+.display-menu button {
+  width: 100%;
+  text-align: left;
+  padding: 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.display-menu button:hover:enabled {
+  background: #36473b;
+}
+.display-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.display-menu label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px;
+  gap: 8px;
+}
+.display-menu p {
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #b5c3ba;
+}
+.display-menu select {
+  background: #101a14;
+  color: #e1e7e3;
+  padding: 5px;
+}
+.display-connection,
+.display-error {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 7px 12px;
+  font-size: 12px;
+}
+.display-connection {
+  color: #a5b5ab;
+}
+.display-connection button,
+.display-error button {
+  border: 1px solid #526458;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.display-error {
+  background: #572b2b;
+  color: #ffdfdf;
+}
+.display-screen-area {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.display-help {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: #b5c3ba;
+  border-top: 1px solid #343e36;
+}
+.display-help details {
+  flex: 1;
+}
+.display-help summary {
+  cursor: pointer;
+}
+.display-help p {
+  line-height: 1.6;
+  max-width: 70ch;
+  margin-top: 8px;
+}
+.display-window :focus-visible {
+  outline: 2px solid #9acaac;
+  outline-offset: 1px;
+}

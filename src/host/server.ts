@@ -91,6 +91,7 @@ export async function startHost(options: {
   info.clientAuthorization = true;
   info.protocolVersion = HOST_PROTOCOL_VERSION;
   const controllers = new Map<string, WebSocket>();
+  const controllerClosers = new Map<string, () => Promise<void>>();
   const clientStreams = new Map<WebSocket, string>();
   const streamClosers = new Set<() => Promise<void>>();
   const socketClosers = new Map<WebSocket, () => Promise<void>>();
@@ -301,9 +302,17 @@ export async function startHost(options: {
     const send = (value: object) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value));
     };
+    // A quality change or immediate reconnect may arrive while the old companion
+    // is draining releases. Wait for that closing lease instead of reporting a
+    // different controlling client or starting two companions for the same device.
+    ws.on('error', () => {});
+    const previous = controllers.get(udid);
+    if (previous && previous.readyState !== WebSocket.OPEN) await controllerClosers.get(udid)?.();
+    if (ws.readyState !== WebSocket.OPEN) return;
     if (controllers.has(udid)) {
       send({
         type: 'error',
+        terminal: true,
         message: 'This simulator is controlled by another client. Disconnect that client first.',
       });
       ws.close();
@@ -314,6 +323,7 @@ export async function startHost(options: {
     let pending: ReturnType<Backend['session']> | undefined;
     let closing: Promise<void> | undefined;
     let sentDimensions = '';
+    const metadataKey = (metadata: StreamMeta) => JSON.stringify(metadata);
     const abort = new AbortController();
     let alive = true,
       opening = true;
@@ -326,11 +336,15 @@ export async function startHost(options: {
         } catch {
           /* Startup may have been canceled. */
         }
-        if (controllers.get(udid) === ws) controllers.delete(udid);
+        if (controllers.get(udid) === ws) {
+          controllers.delete(udid);
+          controllerClosers.delete(udid);
+        }
         streamClosers.delete(cleanup);
         socketClosers.delete(ws);
       })());
     };
+    controllerClosers.set(udid, cleanup);
     streamClosers.add(cleanup);
     socketClosers.set(ws, cleanup);
     ws.on('close', () => {
@@ -374,6 +388,19 @@ export async function startHost(options: {
     });
     try {
       if (!authorized()) throw new AuthorizationRequired();
+      const device = (await backend.inventory()).devices.find((d) => d.udid === udid);
+      if (!device || device.state !== 'Booted') {
+        send({
+          type: 'error',
+          terminal: true,
+          message: device
+            ? 'This simulator is not booted. Start it explicitly before connecting.'
+            : 'This simulator no longer exists.',
+        });
+        ws.close();
+        return;
+      }
+      if (!alive || !authorized()) return;
       pending = backend.session(
         udid,
         fps,
@@ -384,12 +411,9 @@ export async function startHost(options: {
             ws.readyState === WebSocket.OPEN &&
             ws.bufferedAmount < 2 * 1024 * 1024
           ) {
-            if (
-              session &&
-              sentDimensions !== `${session.metadata.width}x${session.metadata.height}`
-            ) {
+            if (session && sentDimensions !== metadataKey(session.metadata)) {
               send({ type: 'metadata', metadata: session.metadata });
-              sentDimensions = `${session.metadata.width}x${session.metadata.height}`;
+              sentDimensions = metadataKey(session.metadata);
             }
             ws.send(data);
           }
@@ -403,7 +427,10 @@ export async function startHost(options: {
       session = await pending;
       opening = false;
       if (!alive) await cleanup();
-      else send({ type: 'metadata', metadata: session.metadata });
+      else {
+        sentDimensions = metadataKey(session.metadata);
+        send({ type: 'metadata', metadata: session.metadata });
+      }
     } catch (e) {
       opening = false;
       send({ type: 'error', message: (e as Error).message });
