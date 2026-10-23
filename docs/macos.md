@@ -15,6 +15,19 @@ Open the disk image, drag **Sim Relay** to **Applications**, eject the image, an
 The corresponding ZIP is an alternative: extract it and move **Sim Relay.app** to Applications.
 Node.js is included in the app runtime; no separate Node installation is required.
 
+To use the host from Terminal after installing the DMG or ZIP, choose **Sim Relay →
+Install host command…** in the app menu. Approve the macOS administrator prompt, then open
+a new Terminal window and run:
+
+```sh
+sim-relay-host
+```
+
+This links the bundled command into `/usr/local/bin`. Keep the app in Applications;
+replacing it there during an upgrade also updates the command. If your shell uses a custom
+PATH, include `/usr/local/bin`. To remove a manually installed command, run
+`sudo rm /usr/local/bin/sim-relay-host`. Removing the link does not delete pairing state.
+
 Release notes and `release.json` state whether that release is Developer ID signed and
 notarized. For an unsigned/ad-hoc build that you trust, attempt to open it, then use
 **System Settings → Privacy & Security → Open Anyway** and confirm. See
@@ -32,6 +45,11 @@ brew tap nailington/sim-relay https://github.com/Nailington/sim-relay.git
 brew install --cask nailington/sim-relay/sim-relay
 open -a "Sim Relay"
 ```
+
+Homebrew also installs `sim-relay-host` on your PATH automatically. Run it from any
+directory; there is no separate Node.js, npm, or source checkout setup. You do not need
+the app's **Install host command…** menu item when installing with Homebrew. Homebrew
+upgrades and uninstalls manage the command along with the app.
 
 Use the explicit Git URL when tapping: the repository is named `sim-relay`, rather than
 Homebrew's conventional `homebrew-sim-relay`. To upgrade:
@@ -83,10 +101,14 @@ If discovery does not find the Mac, enter its IP address directly. Check **Syste
 Privacy & Security → Local Network** and firewall permissions. For direct Ethernet,
 Thunderbolt networking, or SSH tunnels, see [connection instructions](../README.md#local-and-direct-connections).
 
-For a CLI host or source development, clone this repository, install Node.js 24, and run
+For a Terminal host, run `sim-relay-host` instead of starting sharing in the desktop app.
+Use `sim-relay-host --help` for settings and `sim-relay-host --version` to check the installed
+version. Only run one host at a time; the desktop host and CLI use the same default port
+but keep separate pairing state.
+
+For source development, clone this repository, install Node.js 24, and run
 `npm ci` followed by `npm run host` or `npm run dev`. Nix users can use the
 [existing flake](../README.md#install-with-nix); its package also provides `sim-relay-host`.
-The graphical Homebrew/DMG app starts sharing through its own setup screen.
 
 ## Signing releases with your Apple Developer Program account
 

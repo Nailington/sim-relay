@@ -11,4 +11,7 @@ brew tap nailington/sim-relay https://github.com/Nailington/sim-relay.git
 brew install --cask nailington/sim-relay/sim-relay
 ```
 
+The cask installs the desktop app and links its bundled `sim-relay-host` command into
+Homebrew's `bin` directory. No system Node.js or npm installation is needed.
+
 See [macOS installation](../docs/macos.md) and [release setup](../docs/releasing.md).

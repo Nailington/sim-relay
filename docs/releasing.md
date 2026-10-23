@@ -11,7 +11,9 @@ from the published repository and Nix source inputs.
 runs the same complete CI, checks the presence of all fourteen installers, computes SHA-256
 checksums, and publishes a GitHub Release. Uploads finish in a draft before publication.
 The release contains DMG/ZIP, EXE, AppImage/tar.gz/DEB/RPM, `SHA256SUMS`, `release.json`, and, for stable
-versions, the generated `sim-relay.rb` Homebrew cask. Generated GitHub change notes accompany
+versions, the generated `sim-relay.rb` Homebrew cask. The Mac app includes a standalone
+`sim-relay-host` launcher and its host code; the cask links that launcher into Homebrew's
+`bin` directory. Generated GitHub change notes accompany
 installation and signing information. There is no in-app auto-updater.
 
 Both Linux architectures produce all four formats. Debian packages use `amd64`/`arm64`

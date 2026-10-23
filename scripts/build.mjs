@@ -27,7 +27,7 @@ await build({
   platform: 'node',
   format: 'cjs',
   bundle: true,
-  packages: 'external',
+  // The macOS CLI lives outside app.asar and must work without Node/npm installed.
 });
 await mkdir('dist-host', { recursive: true });
 await copyFile('src/host/idb.proto', 'dist-host/idb.proto');

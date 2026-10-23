@@ -116,12 +116,16 @@ The host searches `/opt/homebrew/bin`, `/usr/local/bin`, and `PATH`. Set `IDB_CO
 a custom installation.
 
 In the desktop app on the Mac, select **Set up a Mac host → Start sharing**. Alternatively,
-with Node.js and this project on the Mac:
+start the bundled command from Terminal:
 
 ```sh
-npm ci
-npm run host
+sim-relay-host
 ```
+
+Homebrew installs this command automatically. For a DMG/ZIP install, choose **Sim Relay →
+Install host command…** once in the app menu. No separate Node.js installation or source
+checkout is needed. See the [macOS guide](docs/macos.md) for details. Source developers can
+still use `npm ci` followed by `npm run host`.
 
 Keep the Mac awake and the host running. It shows its address, pairing token, SHA-256
 certificate fingerprint, and dependency readiness. Allow incoming connections through the
@@ -141,7 +145,7 @@ when mDNS is blocked. USB cables without an IP network interface are not support
 SSH tunnels also work, including with Windows OpenSSH. On the Mac:
 
 ```sh
-SIM_RELAY_BIND=127.0.0.1 npm run host
+SIM_RELAY_BIND=127.0.0.1 sim-relay-host
 ```
 
 On the client, keep this tunnel open:

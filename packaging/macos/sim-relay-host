@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+# Resolve Homebrew/manual symlinks, including when invoked from another directory.
+launcher=$0
+case "$launcher" in
+  */*) ;;
+  *) launcher=$(command -v "$launcher") ;;
+esac
+while [ -L "$launcher" ]; do
+  directory=$(CDPATH= cd -P "$(/usr/bin/dirname "$launcher")" && pwd)
+  target=$(/usr/bin/readlink "$launcher")
+  case "$target" in
+    /*) launcher=$target ;;
+    *) launcher=$directory/$target ;;
+  esac
+done
+resources=$(CDPATH= cd -P "$(/usr/bin/dirname "$launcher")/.." && pwd)
+
+# Reuse the signed app runtime. There is no dependency on a system Node installation.
+export ELECTRON_RUN_AS_NODE=1
+exec "$resources/../MacOS/Sim Relay" "$resources/host/host.cjs" "$@"

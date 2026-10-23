@@ -76,7 +76,17 @@
       "artifactName": "Sim-Relay-${version}-mac-${arch}.${ext}",
       "minimumSystemVersion": "13.0",
       "entitlements": "packaging/entitlements.mac.plist",
-      "entitlementsInherit": "packaging/entitlements.mac.plist"
+      "entitlementsInherit": "packaging/entitlements.mac.plist",
+      "extraResources": [
+        {
+          "from": "dist-host",
+          "to": "host"
+        },
+        {
+          "from": "packaging/macos/sim-relay-host",
+          "to": "bin/sim-relay-host"
+        }
+      ]
     },
     "win": {
       "target": [

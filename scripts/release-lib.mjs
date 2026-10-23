@@ -58,6 +58,7 @@ cask "sim-relay" do
   depends_on macos: :ventura
 
   app "Sim Relay.app"
+  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"
 
   zap trash: [
     "~/Library/Application Support/Sim Relay",

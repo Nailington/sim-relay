@@ -3,9 +3,11 @@ import { Bonjour } from 'bonjour-service';
 import { WebSocket } from 'ws';
 import { randomUUID, X509Certificate } from 'node:crypto';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { hostUrl, probeHost, remoteRequest, tlsOptions } from './remote';
 import { startHost } from '../host/server';
+import { installHostCommand } from './host-command';
 import { inputSchema } from '../host/protocol';
 import type { HostEntry, Profile, Probe, HostStatus } from '../shared/types';
 
@@ -258,7 +260,18 @@ async function main() {
   );
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      { label: 'Sim Relay', submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'quit' }] },
+      {
+        label: 'Sim Relay',
+        submenu: [
+          { role: 'about' },
+          ...(process.platform === 'darwin' &&
+          existsSync(path.join(process.resourcesPath, 'bin/sim-relay-host'))
+            ? [{ label: 'Install host command…', click: () => void installHostCommand() }]
+            : []),
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
       {
         label: 'Edit',
         submenu: [
