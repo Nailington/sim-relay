@@ -1,5 +1,6 @@
 import https from 'node:https';
 import packageMetadata from '../../package.json';
+import { HOST_PROTOCOL_VERSION } from '../shared/host-info';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { hostname, networkInterfaces, platform } from 'node:os';
 import { Bonjour } from 'bonjour-service';
@@ -68,6 +69,7 @@ export async function startHost(options: {
     name: hostname().replace(/\.local$/, ''),
     platform: 'macOS',
     version: packageMetadata.version,
+    protocolVersion: HOST_PROTOCOL_VERSION,
     xcode: await exec('xcrun', ['simctl', 'help'], { timeout: 10000 })
       .then(() => true)
       .catch(() => false),
@@ -329,7 +331,11 @@ export async function startHost(options: {
     name: `Sim Relay · ${info.name}`,
     type: 'simrelay',
     port,
-    txt: { name: info.name, fingerprint: credentials.fingerprint, version: '1' },
+    txt: {
+      name: info.name,
+      fingerprint: credentials.fingerprint,
+      version: String(HOST_PROTOCOL_VERSION),
+    },
   });
   const addresses = Object.values(networkInterfaces())
     .flat()

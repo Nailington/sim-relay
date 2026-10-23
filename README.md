@@ -210,6 +210,13 @@ the fingerprint before sending the token. Subsequent HTTPS/WebSocket traffic val
 pinned certificate. The companion uses a private Unix socket, not an exposed gRPC port.
 Browser origins are rejected. The renderer has no Node integration or unrestricted IPC.
 
+HTTPS works with local and Tailscale IP addresses: each Mac generates its own self-signed
+certificate, so it does not need a public domain or a certificate authority. A browser may
+warn about that certificate; Sim Relay pairs by comparing its fingerprint on both devices.
+Connection compatibility uses an API protocol version independently of the app release
+number. Updated clients also recognize hosts from releases `0.1.0` through `0.1.3`, which
+advertised only an app version.
+
 Pairing grants simulator management access as the Mac user, including simulator commands.
 Give the token only to trusted clients. Saved client tokens use operating-system encryption.
 Without secure storage, pairing stays in memory for that session; plaintext persistence is disabled.

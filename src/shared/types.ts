@@ -34,6 +34,7 @@ export interface HostInfo {
   name: string;
   platform: string;
   version: string;
+  protocolVersion?: number;
   companion: boolean;
   xcode: boolean;
 }

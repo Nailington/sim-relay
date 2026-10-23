@@ -1,6 +1,7 @@
 import https from 'node:https';
 import { X509Certificate } from 'node:crypto';
-import type { Profile, Probe, HostInfo } from '../shared/types';
+import type { Profile, Probe } from '../shared/types';
+import { parseHostInfo } from '../shared/host-info';
 
 export function hostUrl(value: string): URL {
   const url = new URL(value.includes('://') ? value : `https://${value}`);
@@ -53,9 +54,7 @@ export async function probeHost(value: string): Promise<Probe> {
           try {
             if (res.statusCode !== 200)
               throw new Error(`The host returned HTTP ${res.statusCode}.`);
-            const info = JSON.parse(data) as HostInfo;
-            if (typeof info.name !== 'string' || info.version !== '0.1.0')
-              throw new Error('This is not a compatible Sim Relay host.');
+            const info = parseHostInfo(JSON.parse(data));
             resolve({ info, certificate, fingerprint: cert.fingerprint256, url: url.origin });
           } catch (error) {
             reject(error);
