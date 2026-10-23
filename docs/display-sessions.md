@@ -53,12 +53,19 @@ Additive APIs:
 
 `DisplayWindow.tsx`/`display.css` contain only the pop-out controls and screen layout, avoiding a dependency on the workspace redesign. Media/recording APIs can be added to its Actions menu and should retain sender-window routing and native dialog parenting.
 
+## Authorization dependency
+
+This branch includes `feature/client-authorization` (PR15, `2110def`) and is reviewed as PR18 against that branch. The desktop `pair` handler exchanges a single-use host code through `pairRemoteClient`; only the returned per-client credential is stored in `Profile.token` and used for HTTPS/WebSocket access. Certificate pinning, protocol-1/2 compatibility, sender-window routing, abortable preflights, and terminal revocation handling are retained together.
+
+The protocol fixtures pair with `pairRemoteClient`. The native smoke goes through the actual preload `relay.pair` API, which calls that same helper in Electron main, and verifies the code was consumed and cannot authorize protected endpoints. The inherited archive, HID, protocol, release, server and authorization regressions are included in `npm test`; Linux CI runs the full suite and the native fake-host smoke after building. Fake inventories explicitly report booted devices (or transition after boot) so shutdown-safe reconnect checks remain enforced.
+
 ## Validation
 
 Automated checks (Linux, fake simulators):
 
 ```sh
 npm run check
+npm test # complete tracked regression suite, including authorization
 npm run build
 npm run test:sessions:native # Linux headless Electron; uses a fake host and isolated userData
 node --import tsx --test tests/session-architecture.test.ts tests/display-coordinates.test.ts tests/session-host.test.ts

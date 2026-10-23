@@ -22,7 +22,7 @@ const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-12
   await ready(main);
   const host = await js(
     main,
-    `(async()=>window.relay.pair(await window.relay.probe(${JSON.stringify(process.env.SIM_RELAY_SMOKE_URL)}),${JSON.stringify(process.env.SIM_RELAY_SMOKE_TOKEN)}))()`,
+    `(async()=>window.relay.pair(await window.relay.probe(${JSON.stringify(process.env.SIM_RELAY_SMOKE_URL)}),${JSON.stringify(process.env.SIM_RELAY_SMOKE_PAIRING_CODE)}))()`,
   );
   const hostId = JSON.stringify(host.id);
   await js(

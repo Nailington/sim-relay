@@ -84,7 +84,7 @@ export async function remoteRequest(
 ): Promise<Buffer> {
   if (
     !['GET', 'POST'].includes(method) ||
-    !/^\/(info|devices(?:\/[^/]+\/(?:boot|shutdown|screenshot|url|location|appearance|install|text))?|command)$/.test(
+    !/^\/(info|devices(?:\/[^/]+\/(?:boot|shutdown|screenshot|url|location|appearance|install|text))?|command|pair)$/.test(
       pathname,
     )
   )
@@ -144,4 +144,21 @@ export async function remoteRequest(
     if (encoded) req.write(encoded);
     req.end();
   });
+}
+
+export async function pairRemoteClient(
+  profile: Profile,
+  probe: Probe,
+  clientName: string,
+): Promise<Profile> {
+  if (!probe.info.clientAuthorization) {
+    await remoteRequest(profile, 'GET', '/devices');
+    return profile;
+  }
+  const result = JSON.parse(
+    (await remoteRequest(profile, 'POST', '/pair', { name: clientName })).toString(),
+  );
+  if (typeof result.token !== 'string' || !/^[\w-]{43}$/.test(result.token))
+    throw new Error('The Mac returned an invalid client credential. Pair again.');
+  return { ...profile, token: result.token };
 }

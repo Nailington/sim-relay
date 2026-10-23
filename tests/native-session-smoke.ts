@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import electron from 'electron';
 import { startHost, type Backend } from '../src/host/server';
+import { remoteRequest, probeHost } from '../src/electron/remote';
 import type { InputEvent, Inventory } from '../src/shared/types';
 const directory = await mkdtemp(path.join(tmpdir(), 'sim-relay-native-'));
 const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-123456789ABC'];
@@ -47,6 +48,8 @@ const host = await startHost({
     companion: true,
   },
 });
+const pairingCode = host.status.token!;
+assert.equal(host.status.info?.clientAuthorization, true);
 try {
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
@@ -63,7 +66,7 @@ try {
           SIM_RELAY_DEV: '0',
           SIM_RELAY_SMOKE_USER_DATA: path.join(directory, 'client'),
           SIM_RELAY_SMOKE_URL: host.status.url,
-          SIM_RELAY_SMOKE_TOKEN: host.status.token,
+          SIM_RELAY_SMOKE_PAIRING_CODE: pairingCode,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       },
@@ -86,6 +89,28 @@ try {
         : reject(new Error(`Electron smoke exited ${code}`));
     });
   });
+  assert.notEqual(
+    host.status.token,
+    pairingCode,
+    'desktop pairRemoteClient must consume the single-use pairing code',
+  );
+  const probe = await probeHost(host.status.url!);
+  await assert.rejects(
+    remoteRequest(
+      {
+        id: 'bootstrap',
+        name: 'bootstrap',
+        url: probe.url,
+        source: 'saved',
+        certificate: probe.certificate,
+        fingerprint: probe.fingerprint,
+        token: pairingCode,
+      },
+      'GET',
+      '/devices',
+    ),
+    /authorized/,
+  );
   assert.equal(starts, 3, 'moving/returning live sessions must not create extra sockets');
   assert.ok(events.get(ids[0])!.some((e) => e.type === 'button' && e.button === 'HOME'));
   assert.ok(events.get(ids[0])!.some((e) => e.type === 'button' && e.button === 'VOLUME_UP'));

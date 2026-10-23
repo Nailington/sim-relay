@@ -5,8 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
 import { startHost, type Backend } from '../src/host/server';
-import { identity } from '../src/host/security';
-import { tlsOptions } from '../src/electron/remote';
+import { tlsOptions, probeHost, pairRemoteClient, remoteRequest } from '../src/electron/remote';
 import type { InputEvent, Inventory, StreamMeta, StreamNotice } from '../src/shared/types';
 const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-123456789ABC'];
 const wait = async (check: () => boolean) => {
@@ -68,16 +67,26 @@ test('real pinned HTTPS/WSS isolates two devices, rejects conflicts, forwards ro
       companion: true,
     },
   });
-  const credentials = await identity(directory);
-  const profile = {
-    id: 'test',
-    name: 'Test Mac',
-    source: 'saved' as const,
-    url: host.status.url!,
-    token: credentials.token,
-    certificate: credentials.cert.toString(),
-    fingerprint: credentials.fingerprint,
-  };
+  const probe = await probeHost(host.status.url!);
+  const pairingCode = host.status.token!;
+  const profile = await pairRemoteClient(
+    {
+      id: 'test',
+      name: 'Test Mac',
+      source: 'saved',
+      url: probe.url,
+      token: pairingCode,
+      certificate: probe.certificate,
+      fingerprint: probe.fingerprint,
+    },
+    probe,
+    'Session protocol test',
+  );
+  assert.notEqual(profile.token, pairingCode);
+  await assert.rejects(
+    remoteRequest({ ...profile, token: pairingCode }, 'GET', '/devices'),
+    /authorized/,
+  );
   const sockets: WebSocket[] = [];
   const open = (udid: string) => {
     const socket = new WebSocket(
