@@ -2,9 +2,9 @@
 cask "sim-relay" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.1.1"
-  sha256 arm:   "e5c31d775e5f62c25bde2d042e392f1d91578984082d3dfd68d9df994fa19d82",
-         intel: "c6a121b648c2c61f63dfdde2940d19ae6735c42d5afedd0ea105a350a03ecbad"
+  version "0.1.2"
+  sha256 arm:   "2541045f09568fcd3a0a17dbf44cedccb0d3a95a091a14ead168cb4ff8e37ee2",
+         intel: "446f8c77bed97bdba628bc9f61254cb8a5a39781744ab5728b6c2082fcc8c317"
 
   url "https://github.com/Nailington/sim-relay/releases/download/v#{version}/Sim-Relay-#{version}-mac-#{arch}.dmg"
   name "Sim Relay"
@@ -14,6 +14,7 @@ cask "sim-relay" do
   depends_on macos: :ventura
 
   app "Sim Relay.app"
+  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"
 
   zap trash: [
     "~/Library/Application Support/Sim Relay",
