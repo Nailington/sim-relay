@@ -31,7 +31,7 @@ export const serviceStatusFile = (directory: string, pid: number) =>
 
 export function printHostStatus(status: HostStatus) {
   console.log(
-    `\nSim Relay host\n${status.url}\n${status.addresses?.join('\n')}\n\nPairing token: ${status.token}\nSHA-256 fingerprint: ${status.fingerprint}\n\nXcode: ${status.info?.xcode ? 'ready' : 'not found'}\nInput service: ${status.info?.companion ? 'ready' : 'install idb_companion'}\n`,
+    `\nSim Relay host\n${status.url}\n${status.addresses?.join('\n')}\n\nPairing code: ${status.token}\nThe code changes after pairing. Run sim-relay-host pairing for the current code.\nSHA-256 fingerprint: ${status.fingerprint}\n\nXcode: ${status.info?.xcode ? 'ready' : 'not found'}\nInput service: ${status.info?.companion ? 'ready' : 'install idb_companion'}\n`,
   );
 }
 
