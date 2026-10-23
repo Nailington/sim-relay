@@ -14,7 +14,7 @@
     "host": "tsx src/host/cli.ts",
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/*.test.*",
     "package": "npm run build && electron-builder",
     "package:dir": "npm run build && electron-builder --dir",
     "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs"

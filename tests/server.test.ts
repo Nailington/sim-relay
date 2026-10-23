@@ -65,15 +65,19 @@ test('TLS host: pairing, certificate pinning, lifecycle, command confirmation, a
     const probe = await probeHost(url);
     assert.equal(probe.info.name, 'Test Mac');
     assert.equal(probe.fingerprint, host.status.fingerprint);
-    const profile: Profile = await pairRemoteClient({
-      id: 'test',
-      name: 'Test',
-      url,
-      certificate: probe.certificate,
-      fingerprint: probe.fingerprint,
-      token: host.status.token!,
-      source: 'saved',
-    }, probe, 'Test desktop');
+    const profile: Profile = await pairRemoteClient(
+      {
+        id: 'test',
+        name: 'Test',
+        url,
+        certificate: probe.certificate,
+        fingerprint: probe.fingerprint,
+        token: host.status.token!,
+        source: 'saved',
+      },
+      probe,
+      'Test desktop',
+    );
     await assert.rejects(
       remoteRequest({ ...profile, token: 'wrong' }, 'GET', '/devices'),
       /no longer authorized/,
