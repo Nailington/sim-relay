@@ -16,7 +16,7 @@ Observed results:
 
 1. Both real companion sessions streamed concurrently at requested 15 fps. At the first snapshot each had delivered 44 frames; by the final snapshot each had delivered **183 frames**, with no video/HID error callbacks.
 2. Both report an encoded surface of 1206 × 2622 and 402 × 874 simulator points (density 3).
-3. `describe` returned an empty `displays` list and `get_orientation` was unsupported. This installed companion therefore follows the legacy portrait-surface path; the newer externally reported orientation path remains unverified on hardware.
+3. `describe` returned an empty `displays` list, and no usable host orientation was reported (`orientationSource` stayed `unavailable`). The exact orientation RPC failure code was not logged. This session therefore followed the legacy portrait-surface path; the newer externally reported orientation path remains unverified on hardware.
 4. Sending legacy `LANDSCAPE_LEFT` to A changed A's metadata to `rotation:90`, `orientationSource:requested`; B remained `rotation:0`, `orientationSource:unavailable`. Restoring A to portrait returned its rotation to zero. Both streams kept advancing. This verifies independent routing and requested-orientation metadata, **not upright Safari content or actual rotated hit targets**.
 5. Owned sessions closed through their normal cleanup paths. No global companion kill or user-device action was used.
 
