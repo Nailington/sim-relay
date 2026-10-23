@@ -41,6 +41,7 @@ export const inputSchema = z.discriminatedUnion('type', [
     orientation: z.enum(['PORTRAIT', 'PORTRAIT_UPSIDE_DOWN', 'LANDSCAPE_LEFT', 'LANDSCAPE_RIGHT']),
   }),
   z.object({ type: z.literal('shake') }),
+  z.object({ type: z.literal('release') }),
 ]);
 
 export function hidEvents(input: InputEvent, screen: StreamMeta): object[] {
@@ -50,6 +51,8 @@ export function hidEvents(input: InputEvent, screen: StreamMeta): object[] {
   });
   const press = (action: object, direction: string) => ({ press: { action, direction } });
   switch (input.type) {
+    case 'release':
+      return [];
     case 'touch':
       return [
         press({ touch: { point: position(input.point) } }, input.phase === 'up' ? 'UP' : 'DOWN'),

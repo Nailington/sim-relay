@@ -15,6 +15,7 @@ import {
   Link2,
   LockKeyhole,
   Maximize2,
+  ExternalLink,
   Monitor,
   Moon,
   Plus,
@@ -33,7 +34,14 @@ import {
   Wifi,
   X,
 } from 'lucide-react';
-import type { HostEntry, Inventory, Simulator, StreamMeta, InputEvent } from '../shared/types';
+import type {
+  HostEntry,
+  Inventory,
+  Simulator,
+  StreamMeta,
+  InputEvent,
+  DisplayContext,
+} from '../shared/types';
 import { Busy, IconButton, Modal } from './components';
 import { DeviceStage } from './DeviceStage';
 import { demoHosts, demoInventory } from './demo';
@@ -72,6 +80,8 @@ export function App() {
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [stream, setStream] = useState<'off' | 'connecting' | 'live'>(!api ? 'live' : 'off');
+  const [connectionStatus, setConnectionStatus] = useState('');
+  const [canRetry, setCanRetry] = useState(false);
   const [metadata, setMetadata] = useState<StreamMeta>();
   const [fps, setFps] = useState(0);
   const [targetFps, setTargetFps] = useState(30);
@@ -141,6 +151,23 @@ export function App() {
   useEffect(() => {
     if (!api || demo) return;
     return api.onNotice((notice) => {
+      if (notice.type === 'status') {
+        setCanRetry(notice.state === 'retrying' || notice.state === 'failed');
+        setConnectionStatus(
+          notice.state === 'retrying'
+            ? `${notice.message} Retry ${notice.attempt} in ${(notice.retryInMs ?? 0) / 1000}s.`
+            : (notice.message ?? ''),
+        );
+        if (notice.state === 'connecting' || notice.state === 'retrying') {
+          setStream('connecting');
+          setFps(0);
+        }
+        if (notice.state === 'off' || notice.state === 'failed') {
+          setStream('off');
+          setFps(0);
+        }
+        if (notice.state === 'failed') setError(notice.message ?? 'Cannot connect to this Mac.');
+      }
       if (notice.type === 'metadata') {
         setMetadata(notice.metadata);
         setStream('live');
@@ -155,6 +182,39 @@ export function App() {
       }
     });
   }, [api, demo]);
+  useEffect(() => {
+    if (!api) return;
+    const restore = (context: DisplayContext) => {
+      connectionAttempt.current++;
+      setDemo(false);
+      setHost(context.host);
+      currentHost.current = context.host.id;
+      setInventory((old) => ({ ...old, devices: [context.device] }));
+      setSelectedId(context.device.udid);
+      setTargetFps(context.fps);
+      setMetadata(undefined);
+      setStream(context.sessionActive ? 'connecting' : 'off');
+      setError('');
+      void api
+        .request<Inventory>(context.host.id, 'GET', '/devices')
+        .then((value) => {
+          if (currentHost.current === context.host.id) setInventory(value);
+        })
+        .catch((e) => setError(e.message));
+      if (context.sessionActive)
+        void api
+          .connect(context.host.id, context.device.udid, context.fps)
+          .catch((e) => setError(e.message));
+    };
+    const off = api.onReturnDisplay(restore);
+    void api
+      .displayContext()
+      .then((context) => {
+        if (context) restore(context);
+      })
+      .catch((e) => setError(e.message));
+    return off;
+  }, [api]);
   const refreshInventory = async (entry = host) => {
     if (!entry || entry.source === 'demo') return;
     const value = await api!.request<Inventory>(entry.id, 'GET', '/devices');
@@ -165,6 +225,8 @@ export function App() {
     connectionAttempt.current++;
     await api?.disconnect();
     setStream('off');
+    setConnectionStatus('');
+    setCanRetry(false);
     setMetadata(undefined);
     setFps(0);
   };
@@ -609,6 +671,19 @@ export function App() {
                       <Unplug size={16} />
                     </IconButton>
                   )}
+                  {!demo && api && (
+                    <IconButton
+                      label="Pop out display"
+                      disabled={!!busy}
+                      onClick={() =>
+                        void act('Opening display window', () =>
+                          api.popOut(host!.id, selected.udid, targetFps),
+                        )
+                      }
+                    >
+                      <ExternalLink size={16} />
+                    </IconButton>
+                  )}
                   <IconButton
                     label={controls ? 'Hide simulator controls' : 'Show simulator controls'}
                     active={controls}
@@ -625,6 +700,19 @@ export function App() {
                   </IconButton>
                 </div>
               </header>
+              {connectionStatus && (
+                <div className="display-connection" role="status">
+                  {connectionStatus}
+                  {canRetry && (
+                    <>
+                      <button onClick={() => void act('Retrying connection', () => api!.retry())}>
+                        Retry now
+                      </button>
+                      <button onClick={() => void stopStream()}>Cancel retries</button>
+                    </>
+                  )}
+                </div>
+              )}
               <div className="viewer-content">
                 <div className="display-area">
                   {stream === 'off' ? (
@@ -676,7 +764,11 @@ export function App() {
                             input({
                               type: 'rotate',
                               orientation:
-                                metadata && metadata.width > metadata.height
+                                metadata &&
+                                (metadata.orientation?.startsWith('LANDSCAPE') ||
+                                  metadata.rotation === 90 ||
+                                  metadata.rotation === 270 ||
+                                  metadata.width > metadata.height)
                                   ? 'PORTRAIT'
                                   : 'LANDSCAPE_LEFT',
                             });
@@ -1035,8 +1127,10 @@ export function App() {
             <strong>Input in this version</strong>
             <p>
               Touch, drag, long press, keyboard, pinch, rotation, shake, and hardware buttons. Use
-              Alt + drag or Ctrl + scroll to pinch. For keyboard input, click the display first. Use
-              Ctrl+K or Cmd+K for simctl commands; / focuses search. Escape exits expanded view.
+              Alt + drag or Ctrl + scroll to pinch. Two touchscreen contacts perform a pinch on
+              lift. Continuous pinch, twist, and arbitrary multi-finger paths are unavailable. Click
+              the display to type. Ctrl+K or Cmd+K opens simctl commands; / focuses search. Escape
+              exits expanded view.
             </p>
           </div>
           <p className="modal-note">

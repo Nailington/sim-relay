@@ -6,7 +6,9 @@ import { hostname, networkInterfaces, platform } from 'node:os';
 import { Bonjour } from 'bonjour-service';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
-import { identity, authorized } from './security';
+import { identity } from './security';
+import { clientAuthorizations } from './clients';
+import { clientAdminServer } from './client-admin';
 import { MacSimulator, exec, companionExecutable } from './simulator';
 import { inputSchema } from './protocol';
 import { extractAppArchive } from './archive';
@@ -65,6 +67,7 @@ export async function startHost(options: {
     );
   const backend = options.backend ?? new MacSimulator();
   const credentials = await identity(options.directory);
+  const clients = await clientAuthorizations(options.directory);
   const info: HostInfo = options.info ?? {
     name: hostname().replace(/\.local$/, ''),
     platform: 'macOS',
@@ -77,8 +80,13 @@ export async function startHost(options: {
       .then(() => true)
       .catch(() => false),
   };
+  info.clientAuthorization = true;
+  info.protocolVersion = HOST_PROTOCOL_VERSION;
   const controllers = new Map<string, WebSocket>();
+  const controllerClosers = new Map<string, () => Promise<void>>();
+  const clientStreams = new Map<WebSocket, string>();
   const streamClosers = new Set<() => Promise<void>>();
+  const socketClosers = new Map<WebSocket, () => Promise<void>>();
   const server = https.createServer(
     { cert: credentials.cert, key: credentials.key, minVersion: 'TLSv1.2' },
     async (req, res) => {
@@ -87,9 +95,30 @@ export async function startHost(options: {
         return json(res, 403, { error: 'Use the Sim Relay desktop app to connect.' });
       const pathname = new URL(req.url ?? '/', 'https://localhost').pathname;
       if (pathname === '/info' && req.method === 'GET') return json(res, 200, info);
-      if (!authorized(req.headers.authorization, credentials.token))
+      if (pathname === '/pair' && req.method === 'POST') {
+        try {
+          const { name } = z
+            .object({
+              name: z
+                .string()
+                .trim()
+                .min(1)
+                .max(100)
+                .regex(/^[^\x00-\x1f\x7f]+$/),
+            })
+            .parse(await body(req));
+          return json(res, 201, await clients.pair(req.headers.authorization, name));
+        } catch {
+          return json(res, 401, {
+            error: 'Pairing code is incorrect or already used. Get the current code from the Mac.',
+          });
+        }
+      }
+      if (!clients.authenticate(req.headers.authorization))
         return json(res, 401, {
-          error: 'Pairing token is incorrect. Copy the token from the host Mac.',
+          error:
+            'This client is no longer authorized. Pair with the Mac again using its current pairing code.',
+          code: 'authorization_required',
         });
       try {
         if (pathname === '/devices' && req.method === 'GET')
@@ -190,7 +219,8 @@ export async function startHost(options: {
     perMessageDeflate: false,
   });
   server.on('upgrade', (req, socket, head) => {
-    if (req.headers.origin || !authorized(req.headers.authorization, credentials.token)) {
+    const clientId = clients.authenticate(req.headers.authorization);
+    if (req.headers.origin || !clientId) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
@@ -206,15 +236,31 @@ export async function startHost(options: {
       socket.destroy();
       return;
     }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, udid, fps));
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      if (!clients.authenticate(req.headers.authorization)) {
+        ws.close(4003, 'Authorization required');
+        return;
+      }
+      clientStreams.set(ws, clientId);
+      ws.once('close', () => clientStreams.delete(ws));
+      wss.emit('connection', ws, udid, fps);
+    });
   });
   wss.on('connection', async (ws: WebSocket, udid: string, fps: number) => {
     const send = (value: object) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value));
     };
+    // A quality change or immediate reconnect may arrive while the old companion
+    // is draining releases. Wait for that closing lease instead of reporting a
+    // different controlling client or starting two companions for the same device.
+    ws.on('error', () => {});
+    const previous = controllers.get(udid);
+    if (previous && previous.readyState !== WebSocket.OPEN) await controllerClosers.get(udid)?.();
+    if (ws.readyState !== WebSocket.OPEN) return;
     if (controllers.has(udid)) {
       send({
         type: 'error',
+        terminal: true,
         message: 'This simulator is controlled by another client. Disconnect that client first.',
       });
       ws.close();
@@ -225,6 +271,7 @@ export async function startHost(options: {
     let pending: ReturnType<Backend['session']> | undefined;
     let closing: Promise<void> | undefined;
     let sentDimensions = '';
+    const metadataKey = (metadata: StreamMeta) => JSON.stringify(metadata);
     const abort = new AbortController();
     let alive = true,
       opening = true;
@@ -237,11 +284,17 @@ export async function startHost(options: {
         } catch {
           /* Startup may have been canceled. */
         }
-        if (controllers.get(udid) === ws) controllers.delete(udid);
+        if (controllers.get(udid) === ws) {
+          controllers.delete(udid);
+          controllerClosers.delete(udid);
+        }
         streamClosers.delete(cleanup);
+        socketClosers.delete(ws);
       })());
     };
+    controllerClosers.set(udid, cleanup);
     streamClosers.add(cleanup);
+    socketClosers.set(ws, cleanup);
     ws.on('close', () => {
       void cleanup();
     });
@@ -263,6 +316,7 @@ export async function startHost(options: {
     let rateStart = Date.now(),
       count = 0;
     ws.on('message', (raw) => {
+      if (!alive) return;
       if (Date.now() - rateStart > 1000) {
         rateStart = Date.now();
         count = 0;
@@ -281,17 +335,27 @@ export async function startHost(options: {
       }
     });
     try {
+      const device = (await backend.inventory()).devices.find((d) => d.udid === udid);
+      if (!device || device.state !== 'Booted') {
+        send({
+          type: 'error',
+          terminal: true,
+          message: device
+            ? 'This simulator is not booted. Start it explicitly before connecting.'
+            : 'This simulator no longer exists.',
+        });
+        ws.close();
+        return;
+      }
+      if (!alive) return;
       pending = backend.session(
         udid,
         fps,
         (data) => {
           if (alive && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 2 * 1024 * 1024) {
-            if (
-              session &&
-              sentDimensions !== `${session.metadata.width}x${session.metadata.height}`
-            ) {
+            if (session && sentDimensions !== metadataKey(session.metadata)) {
               send({ type: 'metadata', metadata: session.metadata });
-              sentDimensions = `${session.metadata.width}x${session.metadata.height}`;
+              sentDimensions = metadataKey(session.metadata);
             }
             ws.send(data);
           }
@@ -305,7 +369,10 @@ export async function startHost(options: {
       session = await pending;
       opening = false;
       if (!alive) await cleanup();
-      else send({ type: 'metadata', metadata: session.metadata });
+      else {
+        sentDimensions = metadataKey(session.metadata);
+        send({ type: 'metadata', metadata: session.metadata });
+      }
     } catch (e) {
       opening = false;
       send({ type: 'error', message: (e as Error).message });
@@ -319,6 +386,46 @@ export async function startHost(options: {
       resolve();
     });
   });
+  let closeAdmin: () => Promise<void>;
+  try {
+    closeAdmin = await clientAdminServer(options.directory, async (request) => {
+      const data = z
+        .discriminatedUnion('action', [
+          z.object({ action: z.literal('list') }),
+          z.object({ action: z.literal('revoke'), id: uuid }),
+          z.object({ action: z.literal('pairing') }),
+        ])
+        .parse(request);
+      if (data.action === 'pairing')
+        return { token: clients.pairingToken, fingerprint: credentials.fingerprint };
+      if (data.action === 'list')
+        return clients.list(
+          (id) => [...clientStreams.values()].filter((value) => value === id).length,
+        );
+      await clients.revoke(data.id);
+      for (const [ws, id] of clientStreams) {
+        if (id !== data.id) continue;
+        if (ws.readyState === WebSocket.OPEN)
+          ws.send(
+            JSON.stringify({
+              type: 'error',
+              code: 'authorization_required',
+              message: 'Access was revoked on the Mac. Pair with the Mac again to reconnect.',
+            }),
+          );
+        ws.close(4003, 'Authorization revoked');
+        // Cleanup cannot depend on an uncooperative remote client completing the close handshake.
+        await socketClosers.get(ws)?.();
+        const timeout = setTimeout(() => ws.terminate(), 1000);
+        timeout.unref();
+        ws.once('close', () => clearTimeout(timeout));
+      }
+      return { revoked: data.id };
+    });
+  } catch (error) {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw error;
+  }
   const port = (server.address() as { port: number }).port;
   const loopback = ['127.0.0.1', '::1', 'localhost'].includes(options.bind ?? '');
   const bonjour =
@@ -345,7 +452,9 @@ export async function startHost(options: {
     running: true,
     url: `https://${loopback ? '127.0.0.1' : hostname()}:${port}`,
     addresses: loopback ? [`https://127.0.0.1:${port}`] : addresses,
-    token: credentials.token,
+    get token() {
+      return clients.pairingToken;
+    },
     fingerprint: credentials.fingerprint,
     info,
   };
@@ -353,6 +462,7 @@ export async function startHost(options: {
     status,
     server,
     async close() {
+      await closeAdmin();
       for (const ws of wss.clients) ws.terminate();
       await Promise.allSettled([...streamClosers].map((close) => close()));
       await new Promise<void>((resolve) => {

@@ -4,6 +4,7 @@
 syntax = "proto3";
 package idb;
 service CompanionService {
+  rpc get_orientation(GetOrientationRequest) returns (GetOrientationResponse) {}
   rpc describe(TargetDescriptionRequest) returns (TargetDescriptionResponse) {}
   rpc hid(stream HIDEvent) returns (HIDResponse) {}
   rpc video_stream(stream VideoStreamRequest) returns (stream VideoStreamResponse) {}
@@ -12,7 +13,8 @@ message Point { double x = 1; double y = 2; }
 message TargetDescriptionRequest {}
 message TargetDescriptionResponse { TargetDescription target_description = 1; }
 message ScreenDimensions { uint64 width = 1; uint64 height = 2; double density = 3; uint64 width_points = 4; uint64 height_points = 5; }
-message TargetDescription { string udid = 1; string name = 2; ScreenDimensions screen_dimensions = 3; string state = 4; }
+message TargetDescription { string udid = 1; string name = 2; ScreenDimensions screen_dimensions = 3; string state = 4; repeated Display displays = 11; }
+message Display { string id = 1; string name = 2; bool active = 3; bool integrated = 4; uint64 width = 5; uint64 height = 6; double density = 7; }
 message HIDEvent {
   enum HIDDirection { DOWN = 0; UP = 1; }
   message HIDTouch { Point point = 1; }
@@ -38,3 +40,9 @@ message VideoStreamRequest {
   oneof control { Start start = 1; Stop stop = 2; }
 }
 message VideoStreamResponse { oneof output { bytes log_output = 1; Payload payload = 2; } }
+
+message GetOrientationRequest {}
+message GetOrientationResponse {
+  enum Orientation { UNKNOWN = 0; PORTRAIT = 1; PORTRAIT_UPSIDE_DOWN = 2; LANDSCAPE_LEFT = 3; LANDSCAPE_RIGHT = 4; FACE_UP = 5; FACE_DOWN = 6; }
+  Orientation orientation = 1;
+}
