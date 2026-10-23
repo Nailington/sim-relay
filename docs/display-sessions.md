@@ -61,6 +61,8 @@ The protocol fixtures pair with `pairRemoteClient`. The native smoke goes throug
 
 ## Validation
 
+See [the dated native validation evidence](native-session-validation.md) for the authorization-stack test results, two real companion streams, and the memory-pressure limits on Mac gesture/orientation checks.
+
 Automated checks (Linux, fake simulators):
 
 ```sh
@@ -73,7 +75,7 @@ node --import tsx --test tests/session-architecture.test.ts tests/display-coordi
 
 The tests cover bounded retries, explicit cancel, stale connection suppression, release/no replay, terminal auth/certificate/protocol failures, active ownership and transfer, independent hosts/input/frames, exact rotated coordinates/aspect fitting, real pinned HTTPS/WebSocket connections to two fake simulators, conflict reporting, rotation-only metadata and refusal to start a shut-down simulator. A headless Electron 45 smoke test runs the real built main/preload/renderer against a fake host, opens two native BrowserWindows, transfers sessions without duplicate sockets, verifies independent input, duplicate focus, disconnected reservations and returning into an occupied workspace and reopening a previously closed workspace. Screenshot/install dialog methods are stubbed to assert the correct BrowserWindow parent; no operating-system picker is actually shown. This is Linux-only verification, not a real simulator or macOS/Windows window test. Browser inspection additionally checked normal/expanded screen bounds and toolbar menus at 360px.
 
-Manual release gate (not run here; iOS devices unavailable on this Linux environment):
+Manual release gate (partially exercised on the authorized Mac; see the evidence above for exact results and remaining checks):
 
 1. On a Mac with a landscape-capable app, rotate through all four orientations in Sim Relay and Simulator.app, then return portrait. Test current companion and a legacy companion. Check upright content, screen corners, taps, scrolls and pinch centers; verify portrait-only app behavior.
 2. On macOS, Windows and Linux clients, detach, resize to 360px, maximize, full screen and return. Run every toolbar action and its dialogs/file pickers. Verify keyboard traversal, menu Escape, focus restoration, install progress/errors, and screenshot destination parent.
