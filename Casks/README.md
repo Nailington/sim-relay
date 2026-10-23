@@ -13,5 +13,7 @@ brew install --cask nailington/sim-relay/sim-relay
 
 The cask installs the desktop app and links its bundled `sim-relay-host` command into
 Homebrew's `bin` directory. No system Node.js or npm installation is needed.
+Use `sim-relay-host start` to run it in the background; `stop` disables it. Uninstalling
+the cask also stops and removes its per-user background service.
 
 See [macOS installation](../docs/macos.md) and [release setup](../docs/releasing.md).

@@ -63,7 +63,7 @@ Homebrew does not install Xcode or `idb_companion` for client-only use. It also 
 bypass macOS security prompts for unsigned builds. Pre-releases do not update this tap.
 To uninstall, use `brew uninstall --cask nailington/sim-relay/sim-relay`. Adding `--zap`
 also removes the desktop app's saved pairings and settings; CLI state in `~/.sim-relay`
-is kept separately.
+is kept separately. Homebrew also stops and removes the background host service on uninstall.
 
 ## Share simulators from this Mac
 
@@ -105,6 +105,51 @@ For a Terminal host, run `sim-relay-host` instead of starting sharing in the des
 Use `sim-relay-host --help` for settings and `sim-relay-host --version` to check the installed
 version. Only run one host at a time; the desktop host and CLI use the same default port
 but keep separate pairing state.
+
+## Run the host in the background
+
+After installing the command, run:
+
+```sh
+sim-relay-host start
+```
+
+You can close Terminal and the Sim Relay desktop app. The host runs as your macOS user,
+restarts if it crashes, and starts again when you log into the Mac. The Mac must stay
+awake, and you must stay logged into the desktop to use its simulators. No administrator
+password or `sudo` is needed for background commands. `sim-relay-host --background` is
+an alias for `start`.
+
+```sh
+sim-relay-host status   # Show readiness, addresses, pairing token, and fingerprint
+sim-relay-host logs     # Show the last 50 lines of output
+sim-relay-host restart  # Restart with the saved settings
+sim-relay-host stop     # Stop now and disable starting at login
+```
+
+`start` waits for the host to become ready. Running it again does not create another host.
+`status` exits with code 1 when the background host is stopped or not ready. To run in
+Terminal instead, use `sim-relay-host serve` or run `sim-relay-host` without arguments.
+Stop the background host before starting a foreground host or sharing in the desktop app.
+
+Set options when starting the service; it remembers them for subsequent restarts:
+
+```sh
+SIM_RELAY_BIND=127.0.0.1 SIM_RELAY_PORT=49301 sim-relay-host start
+# To change a running service's settings:
+SIM_RELAY_PORT=49302 sim-relay-host restart
+```
+
+The same applies to `SIM_RELAY_STATE_DIR` and `IDB_COMPANION_PATH`. Use an absolute path
+for a custom companion. Starting again after `stop` uses defaults and any options you set
+in that command. Keep the app installed in its current location; after moving it or
+upgrading, run `sim-relay-host restart` (or `start` if Homebrew stopped it during the upgrade).
+
+The service configuration is `~/Library/LaunchAgents/dev.simrelay.host.plist`. Output is
+stored in `~/Library/Logs/Sim Relay/host.log`, readable only by your user. Logs contain
+pairing details, so keep them private. `stop` leaves logs and pairing state intact.
+Stop the service before removing a manually installed app. Homebrew uninstall stops it
+and removes its service configuration; `--zap` also removes its logs.
 
 For source development, clone this repository, install Node.js 24, and run
 `npm ci` followed by `npm run host` or `npm run dev`. Nix users can use the

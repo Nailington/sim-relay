@@ -60,9 +60,12 @@ cask "sim-relay" do
   app "Sim Relay.app"
   binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"
 
+  uninstall launchctl: "dev.simrelay.host"
+
   zap trash: [
     "~/Library/Application Support/Sim Relay",
     "~/Library/Application Support/ios-sim-stream",
+    "~/Library/Logs/Sim Relay",
   ]
 end
 `;

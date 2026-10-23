@@ -127,6 +127,11 @@ Install host command…** once in the app menu. No separate Node.js installation
 checkout is needed. See the [macOS guide](docs/macos.md) for details. Source developers can
 still use `npm ci` followed by `npm run host`.
 
+To keep sharing after closing Terminal, use `sim-relay-host start`. It runs in the
+background and starts again at login. Use `sim-relay-host status` for pairing details,
+`sim-relay-host logs` for recent output, and `sim-relay-host stop` to stop sharing and
+disable starting at login. See [background host setup](docs/macos.md#run-the-host-in-the-background).
+
 Keep the Mac awake and the host running. It shows its address, pairing token, SHA-256
 certificate fingerprint, and dependency readiness. Allow incoming connections through the
 Mac's firewall for LAN access. Default port: TCP **49300**. Discovery uses Bonjour/mDNS.
