@@ -98,6 +98,17 @@ test('slow decoder drives adaptation and stale telemetry expires', () => {
   assert.equal(qualitySchema.safeParse({ ...defaultQuality(), maxScale: 3 }).success, false);
   assert.throws(() => video.report({ decoded: -1 }));
 });
+test('normal alternating source jitter does not halve the requested frame rate', () => {
+  let now = 0,
+    sent = 0;
+  const video = new AdaptiveVideo(30, () => now);
+  video.configure({ ...defaultQuality(), mode: 'manual', maxKbps: 100000 });
+  for (let frame = 0; frame < 300; frame++) {
+    now = Math.max(0, (frame * 1000) / 30 + (frame % 2 ? -3 : 3));
+    if (video.allow(1000, 0)) sent++;
+  }
+  assert.ok(sent >= 295 && sent <= 300, `Expected near30FPS despite jitter, got ${sent / 10}`);
+});
 test('PCM framing survives every byte boundary and rejects hostile size/alignment', () => {
   const pcm = Buffer.alloc(384, 42),
     header = Buffer.alloc(4);
@@ -467,6 +478,27 @@ test('hung captures receive bounded SIGKILL escalation', async (t) => {
   t.mock.timers.tick(8000);
   await stopped;
   assert.deepEqual(signals, ['graceful', 'SIGKILL']);
+});
+test('recording can finish after the shorter audio shutdown deadline without being killed', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const signals: string[] = [];
+  let finish!: () => void;
+  const child = {
+    exitCode: null,
+    signalCode: null,
+    kill: (signal: string) => {
+      signals.push(signal);
+    },
+  };
+  const done = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const stopped = terminateChild(child as any, done, () => signals.push('graceful'), 35000);
+  t.mock.timers.tick(12000);
+  assert.deepEqual(signals, ['graceful']);
+  finish();
+  await stopped;
+  assert.deepEqual(signals, ['graceful']);
 });
 test('disconnect releases a save waiting on a native dialog without awaiting user interaction', async () => {
   const socket = new FakeSocket(),

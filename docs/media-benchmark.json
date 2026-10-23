@@ -8,7 +8,7 @@
       "scale": 1,
       "bytes": 12675361,
       "kbps": 33800.962666666666,
-      "encodeWallMs": 1546,
+      "encodeWallMs": 1547,
       "ssim": 0.995727
     },
     {
@@ -16,7 +16,7 @@
       "scale": 0.85,
       "bytes": 10034599,
       "kbps": 26758.930666666667,
-      "encodeWallMs": 1075,
+      "encodeWallMs": 1017,
       "ssim": 0.992124
     },
     {
@@ -24,7 +24,7 @@
       "scale": 0.7,
       "bytes": 6746971,
       "kbps": 17991.922666666665,
-      "encodeWallMs": 928,
+      "encodeWallMs": 833,
       "ssim": 0.987261
     },
     {
@@ -32,7 +32,7 @@
       "scale": 0.55,
       "bytes": 4304938,
       "kbps": 11479.834666666668,
-      "encodeWallMs": 983,
+      "encodeWallMs": 775,
       "ssim": 0.978725
     },
     {
@@ -40,7 +40,7 @@
       "scale": 0.4,
       "bytes": 2157320,
       "kbps": 5752.8533333333335,
-      "encodeWallMs": 1619,
+      "encodeWallMs": 958,
       "ssim": 0.966781
     },
     {
@@ -48,7 +48,7 @@
       "scale": 1,
       "bytes": 172703,
       "kbps": 460.54133333333334,
-      "encodeWallMs": 1931,
+      "encodeWallMs": 1517,
       "ssim": 0.999038
     }
   ],
@@ -106,11 +106,11 @@
       "bandwidthKbps": 2000,
       "rttMs": 80,
       "durationSeconds": 60,
-      "sentFps": 6.85,
-      "dropped": 1389,
-      "kbps": 1452.1306666666667,
+      "sentFps": 7.3,
+      "dropped": 1362,
+      "kbps": 1542.4932,
       "maxQueuedBytes": 122203.33333333339,
-      "estimatedTransportP95Ms": 354.682666666667,
+      "estimatedTransportP95Ms": 353.5853333333337,
       "finalSettings": {
         "fps": 8,
         "scale": 0.4,

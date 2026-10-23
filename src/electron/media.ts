@@ -137,14 +137,17 @@ export class ClientMedia {
   command(action: MediaAction, hostAudioConsent?: boolean): Promise<RecordingDownload | undefined> {
     const id = randomUUID();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(
-          new Error(
-            'The host did not finish the media action. Reconnect to release capture resources.',
-          ),
-        );
-      }, 35000);
+      const timer = setTimeout(
+        () => {
+          this.pending.delete(id);
+          reject(
+            new Error(
+              'The host did not finish the media action. Reconnect to release capture resources.',
+            ),
+          );
+        },
+        action.startsWith('recording-') ? 65000 : 35000,
+      );
       this.pending.set(id, { resolve, reject, timer });
       try {
         this.write({ type: 'media-control', id, action, hostAudioConsent });

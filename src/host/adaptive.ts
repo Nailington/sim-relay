@@ -28,7 +28,7 @@ export class AdaptiveVideo {
   private tokens: number;
   private tokenAt: number;
   private sampleAt: number;
-  private sentAt = -Infinity;
+  private nextFrameAt = 0;
   private feedback?: VideoFeedback;
   private feedbackAt = 0;
   roundTripMs?: number;
@@ -57,6 +57,7 @@ export class AdaptiveVideo {
     this.limits = qualitySchema.parse(value);
     this.level = this.healthy = 0;
     this.tokens = this.capacity;
+    this.nextFrameAt = this.now();
     this.settings = this.resolve();
   }
   report(value: unknown) {
@@ -74,7 +75,7 @@ export class AdaptiveVideo {
     if (
       bytes > Math.min(2 * 1024 * 1024, Math.max(64 * 1024, this.capacity)) ||
       buffered > Math.min(256 * 1024, Math.max(16 * 1024, this.capacity * 0.3)) ||
-      now - this.sentAt < 1000 / this.settings.fps - 1 ||
+      now + 250 / this.settings.fps < this.nextFrameAt ||
       this.tokens < Math.min(bytes, this.capacity)
     ) {
       this.dropped++;
@@ -83,7 +84,9 @@ export class AdaptiveVideo {
     this.tokens -= bytes;
     this.bytes += bytes;
     this.sent++;
-    this.sentAt = now;
+    // Preserve the pacing clock across normal capture/transport jitter. Resetting
+    // it to each arrival needlessly discards alternating early frames.
+    this.nextFrameAt = Math.max(this.nextFrameAt + 1000 / this.settings.fps, now);
     return true;
   }
   sample(): StreamMetrics | undefined {

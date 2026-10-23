@@ -15,6 +15,7 @@ export async function terminateChild(
   child: ChildProcess,
   done: Promise<unknown>,
   graceful: () => void,
+  timeoutMs = 8000,
 ) {
   if (child.exitCode !== null || child.signalCode !== null) {
     await done.catch(() => {});
@@ -29,7 +30,7 @@ export async function terminateChild(
         timer = setTimeout(() => {
           child.kill('SIGKILL');
           resolve();
-        }, 8000);
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -47,7 +48,7 @@ function stop() {
   if (stopping) return;
   stopping = true;
   child.kill('SIGINT');
-  setTimeout(() => { child.kill('SIGKILL'); process.exit(1); }, 6000).unref();
+  setTimeout(() => { process.stderr.write('Recording finalization exceeded 30 seconds.\n'); child.kill('SIGKILL'); process.exit(1); }, 30000).unref();
 }
 process.stdin.resume();
 process.stdin.on('end', stop);

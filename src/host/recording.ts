@@ -19,13 +19,19 @@ export type RecordingFactory = (
 export const nativeRecording: RecordingFactory = async (udid, file, signal) => {
   signal.throwIfAborted();
   const child: ChildProcess = spawnRecording(udid, file);
-  const done = childCompletion(child);
+  let diagnostics = '';
+  const diagnostic = (chunk: Buffer) => {
+    diagnostics = (diagnostics + chunk).slice(-3000);
+  };
+  child.stderr?.on('data', diagnostic);
+  const done = childCompletion(child).catch((error: Error) => {
+    throw new Error(`${error.message} ${diagnostics.trim()}`);
+  });
   void done.catch(() => {});
   const abort = () => {
-    void terminateChild(child, done, () => child.stdin?.end());
+    void terminateChild(child, done, () => child.stdin?.end(), 35000);
   };
   signal.addEventListener('abort', abort, { once: true });
-  let diagnostics = '';
   try {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
@@ -40,8 +46,7 @@ export const nativeRecording: RecordingFactory = async (udid, file, signal) => {
         child.stderr?.off('data', data);
         error ? reject(error) : resolve();
       };
-      const data = (chunk: Buffer) => {
-        diagnostics = (diagnostics + chunk).slice(-3000);
+      const data = () => {
         if (/Recording started/i.test(diagnostics)) finish();
       };
       child.stderr?.on('data', data);
@@ -57,17 +62,20 @@ export const nativeRecording: RecordingFactory = async (udid, file, signal) => {
       finished: done,
       stop: () =>
         (stopped ??= (async () => {
-          await terminateChild(child, done, () => child.stdin?.end());
+          await terminateChild(child, done, () => child.stdin?.end(), 35000);
           await done;
+          child.stderr?.off('data', diagnostic);
           signal.removeEventListener('abort', abort);
         })()),
       abort: async () => {
-        await terminateChild(child, done, () => child.stdin?.end());
+        await terminateChild(child, done, () => child.stdin?.end(), 35000);
+        child.stderr?.off('data', diagnostic);
         signal.removeEventListener('abort', abort);
       },
     };
   } catch (error) {
-    await terminateChild(child, done, () => child.stdin?.end());
+    await terminateChild(child, done, () => child.stdin?.end(), 35000);
+    child.stderr?.off('data', diagnostic);
     signal.removeEventListener('abort', abort);
     throw error;
   }
