@@ -8,6 +8,8 @@ import path from 'node:path';
 import { hostUrl, probeHost, remoteRequest, tlsOptions } from './remote';
 import { startHost } from '../host/server';
 import { installHostCommand } from './host-command';
+import { createDiagnostics } from './diagnostics';
+import { serializeReport, type DiagnosticStage } from '../shared/diagnostics';
 import { inputSchema } from '../host/protocol';
 import type { HostEntry, Profile, Probe, HostStatus } from '../shared/types';
 
@@ -25,6 +27,26 @@ const profile = (id: string) => {
   if (!result) throw new Error('Pair with this Mac first.');
   return result;
 };
+const diagnostics = createDiagnostics({
+  version: app.getVersion(),
+  platform: process.platform,
+  profile,
+  probe: probeHost,
+  inventory: async (entry) =>
+    JSON.parse((await remoteRequest(entry, 'GET', '/devices', undefined, 10000)).toString()),
+});
+function actionStage(channel: string, args: unknown[]): DiagnosticStage | undefined {
+  if (channel === 'probe') return 'network';
+  if (['save-screenshot', 'install-app'].includes(channel)) return 'action';
+  if (channel === 'pair') return 'authentication';
+  if (channel === 'connect') return 'stream';
+  if (channel === 'request')
+    return String(args[2]).endsWith('/boot')
+      ? 'boot'
+      : args[2] === '/devices' && args[1] === 'GET'
+        ? 'runtimes'
+        : 'action';
+}
 async function saveProfiles() {
   if (!secureStorageAvailable) return false;
   try {
@@ -52,10 +74,20 @@ function disconnect() {
   old?.close();
 }
 function handle(channel: string, fn: (...args: any[]) => unknown) {
-  ipcMain.handle(channel, (event, ...args) => {
+  ipcMain.handle(channel, async (event, ...args) => {
     if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)
       throw new Error('Unknown app window.');
-    return fn(...args);
+    const stage = actionStage(channel, args);
+    const hostId =
+      ['connect', 'request'].includes(channel) && typeof args[0] === 'string' ? args[0] : undefined;
+    try {
+      const result = await fn(...args);
+      if (stage) diagnostics.record(stage, 'passed', hostId);
+      return result;
+    } catch (error) {
+      if (stage) diagnostics.failure(error, stage, hostId);
+      throw error;
+    }
   });
 }
 async function main() {
@@ -107,6 +139,23 @@ async function main() {
       ),
   );
   handle('probe', probeHost);
+  handle('diagnostics', (id?: string) => {
+    if (id !== undefined && (typeof id !== 'string' || id.length > 1024))
+      throw new Error('Choose a paired Mac.');
+    return diagnostics.refresh(id);
+  });
+  handle('export-diagnostics', async (report: unknown) => {
+    // Revalidate the reviewed report in the main process. No arbitrary text/files.
+    const text = serializeReport(report);
+    const result = await dialog.showSaveDialog(window, {
+      title: 'Save reviewed diagnostic report',
+      defaultPath: 'Sim-Relay-diagnostics.json',
+      filters: [{ name: 'Diagnostic report', extensions: ['json'] }],
+    });
+    if (result.canceled || !result.filePath) return false;
+    await writeFile(result.filePath, text, { mode: 0o600 });
+    return true;
+  });
   handle('copy-text', (text: string) => {
     if (typeof text !== 'string' || text.length > 1000000)
       throw new Error('Text is too large to copy.');
@@ -130,7 +179,7 @@ async function main() {
       token: token.trim(),
       source: 'saved',
     };
-    await remoteRequest(entry, 'GET', '/devices');
+    await remoteRequest(entry, 'GET', '/devices', undefined, 10000);
     profiles.set(entry.id, entry);
     entry.sessionOnly = !(await saveProfiles());
     return publicProfile(entry);
@@ -176,13 +225,16 @@ async function main() {
         if (binary) window.webContents.send('frame', new Uint8Array(data as Buffer));
         else {
           try {
-            window.webContents.send('notice', JSON.parse(data.toString()));
+            const notice = JSON.parse(data.toString());
+            if (notice.type === 'error') diagnostics.failure(notice.message, 'stream', id);
+            window.webContents.send('notice', notice);
           } catch {
             socket.close();
           }
         }
       });
       socket.on('error', (error) => {
+        diagnostics.failure(error, 'stream', id);
         if (stream === socket && !window.isDestroyed())
           window.webContents.send('notice', { type: 'error', message: error.message });
       });

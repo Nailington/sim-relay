@@ -79,6 +79,7 @@ export async function remoteRequest(
   method: string,
   pathname: string,
   body?: unknown,
+  timeoutMs = 130000,
 ): Promise<Buffer> {
   if (
     !['GET', 'POST'].includes(method) ||
@@ -96,7 +97,7 @@ export async function remoteRequest(
       {
         method,
         ...tlsOptions(profile),
-        timeout: 130000,
+        timeout: timeoutMs,
         headers: {
           Authorization: `Bearer ${profile.token}`,
           ...(encoded

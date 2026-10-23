@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopApi } from '../shared/types';
 const api: DesktopApi = {
+  diagnostics: (id) => ipcRenderer.invoke('diagnostics', id),
+  exportDiagnostics: (report) => ipcRenderer.invoke('export-diagnostics', report),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   platform: process.platform,
   hosts: () => ipcRenderer.invoke('hosts'),

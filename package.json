@@ -16,7 +16,8 @@
     "check": "tsc --noEmit",
     "package": "npm run build && electron-builder",
     "package:dir": "npm run build && electron-builder --dir",
-    "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs"
+    "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs",
+    "test": "node --import tsx --test tests/*.test.ts"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.0",

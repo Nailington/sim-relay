@@ -9,6 +9,7 @@ const hostInfoSchema = z.object({
   platform: z.literal('macOS'),
   version: z.string().min(1).max(64),
   protocolVersion: z.number().int().positive().optional(),
+  clientAuthorization: z.boolean().optional(),
   xcode: z.boolean(),
   companion: z.boolean(),
 });
