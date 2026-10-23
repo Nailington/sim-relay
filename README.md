@@ -173,6 +173,11 @@ hosts are not advertised through Bonjour.
 - The inspector provides Home, Lock, rotation, shake, volume, PNG screenshots, appearance,
   deep links, location, and **Paste text**. Paste text uses the simulator clipboard and
   Command+V, including Unicode; focus an iOS text field first.
+- **Media controls** provide adaptive stream quality with manual limits and measured video
+  statistics, silent host-side H.264 screen recordings saved as MP4 on the client, and optional
+  Mac playback audio with client mute/volume. Audio includes every app on the Mac and requires
+  local host opt-in plus macOS permission. See [media setup, lifecycle, codec assessment, and
+  validation limits](docs/media.md). New native recording/audio paths still need real Mac validation.
 - **Install app** transfers a ZIP containing one simulator `.app` from any client OS.
   Build for the simulator, not a physical device. On a Mac, create an archive with
   `ditto -c -k --keepParent MyApp.app MyApp.app.zip`. Limits: 128 MB compressed, 512 MB expanded,
@@ -192,10 +197,10 @@ clients. Disconnecting leaves the simulator running; **Shut down simulator** pow
 - Arbitrary simultaneous multi-finger paths, two-finger twist/rotation gestures, pressure,
   and stylus input are not implemented. The public idb streaming protocol used here exposes
   single-contact input and a predefined pinch. Device orientation rotation is supported.
-- Streaming uses full-resolution MJPEG over TLS, requested 15/30/60 fps, frame dropping under
-  backpressure, and actual decoded-frame measurements. H.264/WebRTC, adaptive bitrate, audio,
-  recording controls, and guaranteed 60 fps are not implemented. MJPEG uses more bandwidth
-  than an inter-frame video codec.
+- Live streaming uses adaptive MJPEG over TLS with bounded frame dropping. Live H.264/WebRTC
+  and guaranteed 60 fps are not implemented. Recording uses H.264 separately. Mac audio is
+  host-wide PCM, not isolated per simulator; precise A/V lip-sync is not guaranteed. Nix builds
+  need a separately compiled audio helper. See the [media guide](docs/media.md) for details.
 - Simulator-specific GUI menus, full Mac desktop control, Xcode editing/building/debugging,
   physical-device features, and long-running console sessions are outside this version.
 - Intel hosts, Windows desktop behavior, signing, and notarization need platform validation.

@@ -1,5 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopApi } from '../shared/types';
+const frameListeners = new Set<Parameters<DesktopApi['onFrame']>[0]>();
+const audioListeners = new Set<Parameters<DesktopApi['onAudio']>[0]>();
+// Always acknowledge even before a display has mounted its decoder.
+ipcRenderer.on('frame', (_event, data: Uint8Array) => {
+  void Promise.allSettled(
+    [...frameListeners].map((callback) => Promise.resolve().then(() => callback(data))),
+  ).finally(() => ipcRenderer.send('video-consumed'));
+});
+ipcRenderer.on('audio-frame', (_event, data: Uint8Array) => {
+  try {
+    for (const callback of audioListeners) callback(data);
+  } finally {
+    ipcRenderer.send('audio-consumed');
+  }
+});
 const api: DesktopApi = {
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   platform: process.platform,
@@ -12,9 +27,32 @@ const api: DesktopApi = {
   disconnect: () => ipcRenderer.invoke('disconnect'),
   input: (event) => ipcRenderer.send('input', event),
   onFrame: (callback) => {
-    const listener = (_event: unknown, data: Uint8Array) => callback(data);
-    ipcRenderer.on('frame', listener);
-    return () => ipcRenderer.removeListener('frame', listener);
+    frameListeners.add(callback);
+    return () => {
+      frameListeners.delete(callback);
+    };
+  },
+  setQuality: (limits) => ipcRenderer.invoke('media-quality', limits),
+  reportVideoFeedback: (feedback) => ipcRenderer.send('video-feedback', feedback),
+  startRecording: () => ipcRenderer.invoke('media-command', 'recording-start'),
+  stopRecording: () => ipcRenderer.invoke('media-command', 'recording-stop'),
+  discardRecording: () => ipcRenderer.invoke('media-command', 'recording-discard'),
+  saveRecording: () => ipcRenderer.invoke('save-recording'),
+  startAudio: (consent) => ipcRenderer.invoke('media-command', 'audio-start', consent),
+  stopAudio: () => ipcRenderer.invoke('media-command', 'audio-stop'),
+  onAudio: (callback) => {
+    audioListeners.add(callback);
+    return () => {
+      audioListeners.delete(callback);
+    };
+  },
+  onMediaNotice: (callback) => {
+    const listener = (
+      _event: unknown,
+      notice: Parameters<Parameters<DesktopApi['onMediaNotice']>[0]>[0],
+    ) => callback(notice);
+    ipcRenderer.on('media-notice', listener);
+    return () => ipcRenderer.removeListener('media-notice', listener);
   },
   onNotice: (callback) => {
     const listener = (

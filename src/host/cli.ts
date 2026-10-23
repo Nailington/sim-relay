@@ -29,6 +29,8 @@ Environment (saved when starting the background host):
   SIM_RELAY_BIND         Listening address (default: 0.0.0.0)
   SIM_RELAY_STATE_DIR    Pairing state (default: ~/.sim-relay)
   IDB_COMPANION_PATH    Custom idb_companion executable
+  SIM_RELAY_ENABLE_HOST_AUDIO  Set to 1 to allow sharing ALL Mac playback audio
+  SIM_RELAY_AUDIO_HELPER       Custom compiled ScreenCaptureKit helper
 
 Only run one host at a time. Stop sharing in the desktop app before starting here.`);
     return;

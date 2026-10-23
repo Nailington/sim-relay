@@ -1,4 +1,10 @@
 import https from 'node:https';
+import path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { HostMedia, MediaPeer } from './media';
+import { RecordingStore } from './recording';
+import type { VideoSettings } from '../shared/media';
 import packageMetadata from '../../package.json';
 import { HOST_PROTOCOL_VERSION } from '../shared/host-info';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -21,7 +27,12 @@ export interface Backend {
     frame: (frame: Buffer) => void,
     error: (e: Error) => void,
     signal?: AbortSignal,
-  ): Promise<{ metadata: StreamMeta; input(e: InputEvent): void; close(): Promise<void> }>;
+  ): Promise<{
+    metadata: StreamMeta;
+    input(e: InputEvent): void;
+    close(): Promise<void>;
+    setVideoSettings?(settings: VideoSettings): void;
+  }>;
 }
 const uuid = z.string().uuid();
 const commandSchema = z.object({
@@ -58,6 +69,7 @@ export async function startHost(options: {
   advertise?: boolean;
   backend?: Backend;
   info?: HostInfo;
+  media?: HostMedia;
 }) {
   if (!options.backend && platform() !== 'darwin')
     throw new Error(
@@ -77,6 +89,14 @@ export async function startHost(options: {
       .then(() => true)
       .catch(() => false),
   };
+  const media =
+    options.media ??
+    new HostMedia(
+      new RecordingStore(path.join(options.directory, 'recordings')),
+      undefined,
+      !options.backend && info.xcode,
+    );
+  await media.initialize();
   const controllers = new Map<string, WebSocket>();
   const streamClosers = new Set<() => Promise<void>>();
   const server = https.createServer(
@@ -92,6 +112,31 @@ export async function startHost(options: {
           error: 'Pairing token is incorrect. Copy the token from the host Mac.',
         });
       try {
+        const download = pathname.match(/^\/recordings\/([\da-f-]{36})$/i);
+        if (download && req.method === 'GET') {
+          const ticket = req.headers['x-recording-ticket'];
+          const recording = media.recordings.download(
+            download[1],
+            typeof ticket === 'string' ? ticket : undefined,
+          );
+          if (!recording)
+            return json(res, 404, {
+              error: 'Recording expired or was discarded. Record it again.',
+            });
+          res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Content-Length': recording.bytes,
+            'Cache-Control': 'no-store',
+            'Content-Disposition': 'attachment; filename="Simulator.mp4"',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          try {
+            await pipeline(createReadStream(recording.file), res);
+          } catch {
+            res.destroy();
+          }
+          return;
+        }
         if (pathname === '/devices' && req.method === 'GET')
           return json(res, 200, await backend.inventory());
         if (pathname === '/devices' && req.method === 'POST') {
@@ -224,6 +269,10 @@ export async function startHost(options: {
     let session: Awaited<ReturnType<Backend['session']>> | undefined;
     let pending: ReturnType<Backend['session']> | undefined;
     let closing: Promise<void> | undefined;
+    const peer = new MediaPeer(ws, udid, fps, media, (settings) =>
+      session?.setVideoSettings?.(settings),
+    );
+    const mediaTimer = setInterval(() => peer.tick(), 1000);
     let sentDimensions = '';
     const abort = new AbortController();
     let alive = true,
@@ -231,7 +280,9 @@ export async function startHost(options: {
     const cleanup = (): Promise<void> => {
       alive = false;
       abort.abort();
+      clearInterval(mediaTimer);
       return (closing ??= (async () => {
+        await peer.close().catch(() => {});
         try {
           await (session ?? (await pending))?.close();
         } catch {
@@ -273,7 +324,9 @@ export async function startHost(options: {
         return;
       }
       try {
-        const event = inputSchema.parse(JSON.parse(raw.toString()));
+        const value = JSON.parse(raw.toString());
+        if (peer.handle(value)) return;
+        const event = inputSchema.parse(value);
         if (session) session.input(event);
         else if (!opening) throw new Error('The input service is unavailable.');
       } catch (e) {
@@ -285,7 +338,11 @@ export async function startHost(options: {
         udid,
         fps,
         (data) => {
-          if (alive && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 2 * 1024 * 1024) {
+          if (
+            alive &&
+            ws.readyState === WebSocket.OPEN &&
+            peer.video.allow(data.length, ws.bufferedAmount)
+          ) {
             if (
               session &&
               sentDimensions !== `${session.metadata.width}x${session.metadata.height}`
@@ -304,6 +361,7 @@ export async function startHost(options: {
       );
       session = await pending;
       opening = false;
+      session.setVideoSettings?.(peer.video.settings);
       if (!alive) await cleanup();
       else send({ type: 'metadata', metadata: session.metadata });
     } catch (e) {

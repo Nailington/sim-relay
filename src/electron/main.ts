@@ -9,11 +9,14 @@ import { hostUrl, probeHost, remoteRequest, tlsOptions } from './remote';
 import { startHost } from '../host/server';
 import { installHostCommand } from './host-command';
 import { inputSchema } from '../host/protocol';
+import { ClientMedia } from './media';
+import type { MediaAction, QualityLimits } from '../shared/media';
 import type { HostEntry, Profile, Probe, HostStatus } from '../shared/types';
 
 let window: BrowserWindow;
 let discovery: Bonjour | undefined;
 let stream: WebSocket | undefined;
+let clientMedia: ClientMedia | undefined;
 let sharing: Awaited<ReturnType<typeof startHost>> | undefined;
 const profiles = new Map<string, Profile>(),
   discovered = new Map<string, HostEntry>();
@@ -47,9 +50,12 @@ async function saveProfiles() {
   }
 }
 function disconnect() {
+  const cleanup = clientMedia?.close();
+  clientMedia = undefined;
   const old = stream;
   stream = undefined;
   old?.close();
+  return cleanup ?? Promise.resolve();
 }
 function handle(channel: string, fn: (...args: any[]) => unknown) {
   ipcMain.handle(channel, (event, ...args) => {
@@ -154,7 +160,7 @@ async function main() {
     JSON.parse((await remoteRequest(profile(id), method, pathname, body)).toString()),
   );
   handle('connect', async (id: string, udid: string, fps: number) => {
-    disconnect();
+    await disconnect();
     if (!/^[\da-f-]{36}$/i.test(udid) || ![15, 30, 60].includes(fps))
       throw new Error('Choose a simulator and frame rate.');
     const p = profile(id),
@@ -168,12 +174,17 @@ async function main() {
       perMessageDeflate: false,
     });
     stream = socket;
+    const media = new ClientMedia(socket, p, (channel, value) => {
+      if (!window.isDestroyed()) window.webContents.send(channel, value);
+    });
+    clientMedia = media;
     await new Promise<void>((resolve, reject) => {
       socket.once('open', resolve);
       socket.once('error', reject);
       socket.on('message', (data, binary) => {
         if (stream !== socket || window.isDestroyed()) return;
-        if (binary) window.webContents.send('frame', new Uint8Array(data as Buffer));
+        if (media.message(data as Buffer, binary)) return;
+        if (binary) media.video(data as Buffer);
         else {
           try {
             window.webContents.send('notice', JSON.parse(data.toString()));
@@ -187,14 +198,59 @@ async function main() {
           window.webContents.send('notice', { type: 'error', message: error.message });
       });
       socket.once('close', () => {
+        void media.close();
         if (stream === socket) {
           stream = undefined;
+          clientMedia = undefined;
           if (!window.isDestroyed()) window.webContents.send('notice', { type: 'closed' });
         }
       });
     });
   });
   handle('disconnect', disconnect);
+  const mediaForWindow = () => {
+    if (!clientMedia) throw new Error('Connect to a simulator first.');
+    return clientMedia;
+  };
+  handle('media-quality', (limits: QualityLimits) => mediaForWindow().quality(limits));
+  handle('media-command', async (action: MediaAction, consent?: boolean) => {
+    if (
+      ![
+        'recording-start',
+        'recording-stop',
+        'recording-discard',
+        'audio-start',
+        'audio-stop',
+      ].includes(action)
+    )
+      throw new Error('Unknown media action.');
+    await mediaForWindow().command(action, consent === true);
+  });
+  handle('save-recording', () =>
+    mediaForWindow().save(async () => {
+      const result = await dialog.showSaveDialog(window, {
+        defaultPath: `Simulator-${new Date().toISOString().replace(/[:.]/g, '-')}.mp4`,
+        filters: [{ name: 'MP4 video (silent)', extensions: ['mp4'] }],
+      });
+      return result.canceled ? undefined : result.filePath;
+    }),
+  );
+  for (const channel of ['video-consumed', 'audio-consumed', 'video-feedback']) {
+    ipcMain.on(channel, (event, value) => {
+      if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)
+        return;
+      if (channel === 'video-consumed') clientMedia?.consumed();
+      else if (channel === 'audio-consumed') clientMedia?.consumedAudio();
+      else {
+        try {
+          clientMedia?.feedback(value);
+        } catch {
+          /* Ignore stale renderer feedback. */
+        }
+      }
+    });
+  }
+
   ipcMain.on('input', (event, input) => {
     if (event.sender === window.webContents && stream?.readyState === WebSocket.OPEN) {
       const parsed = inputSchema.safeParse(input);
@@ -311,7 +367,7 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  disconnect();
+  const cleanup = disconnect();
   discovery?.destroy();
-  void (sharing?.close() ?? Promise.resolve()).finally(() => app.quit());
+  void Promise.allSettled([cleanup, sharing?.close()]).finally(() => app.quit());
 });

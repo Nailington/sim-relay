@@ -1,0 +1,122 @@
+{
+  "source": "Synthetic 1170×2532 Settings UI, 90 scrolling frames at 30 FPS; repeated for 60-second network model. Not a simulator or native idb encoder test.",
+  "version": "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers",
+  "platform": "linux/x64",
+  "codecResults": [
+    {
+      "codec": "mjpeg",
+      "scale": 1,
+      "bytes": 12675361,
+      "kbps": 33800.962666666666,
+      "encodeWallMs": 1546,
+      "ssim": 0.995727
+    },
+    {
+      "codec": "mjpeg",
+      "scale": 0.85,
+      "bytes": 10034599,
+      "kbps": 26758.930666666667,
+      "encodeWallMs": 1075,
+      "ssim": 0.992124
+    },
+    {
+      "codec": "mjpeg",
+      "scale": 0.7,
+      "bytes": 6746971,
+      "kbps": 17991.922666666665,
+      "encodeWallMs": 928,
+      "ssim": 0.987261
+    },
+    {
+      "codec": "mjpeg",
+      "scale": 0.55,
+      "bytes": 4304938,
+      "kbps": 11479.834666666668,
+      "encodeWallMs": 983,
+      "ssim": 0.978725
+    },
+    {
+      "codec": "mjpeg",
+      "scale": 0.4,
+      "bytes": 2157320,
+      "kbps": 5752.8533333333335,
+      "encodeWallMs": 1619,
+      "ssim": 0.966781
+    },
+    {
+      "codec": "libx264-crf23-veryfast-zerolatency",
+      "scale": 1,
+      "bytes": 172703,
+      "kbps": 460.54133333333334,
+      "encodeWallMs": 1931,
+      "ssim": 0.999038
+    }
+  ],
+  "networkResults": [
+    {
+      "adaptive": false,
+      "bandwidthKbps": 100000,
+      "rttMs": 4,
+      "durationSeconds": 60,
+      "sentFps": 30,
+      "dropped": 0,
+      "kbps": 33800.962666666666,
+      "maxQueuedBytes": 150518,
+      "estimatedTransportP95Ms": 13.56232,
+      "finalSettings": {
+        "fps": 30,
+        "scale": 1,
+        "quality": 0.7
+      }
+    },
+    {
+      "adaptive": true,
+      "bandwidthKbps": 100000,
+      "rttMs": 4,
+      "durationSeconds": 60,
+      "sentFps": 30,
+      "dropped": 0,
+      "kbps": 33800.962666666666,
+      "maxQueuedBytes": 150518,
+      "estimatedTransportP95Ms": 13.56232,
+      "finalSettings": {
+        "fps": 30,
+        "scale": 1,
+        "quality": 0.7
+      }
+    },
+    {
+      "adaptive": false,
+      "bandwidthKbps": 2000,
+      "rttMs": 80,
+      "durationSeconds": 60,
+      "sentFps": 2.033333333333333,
+      "dropped": 1678,
+      "kbps": 2284.6912,
+      "maxQueuedBytes": 2246062.333333294,
+      "estimatedTransportP95Ms": 8998.617333333164,
+      "finalSettings": {
+        "fps": 30,
+        "scale": 1,
+        "quality": 0.7
+      }
+    },
+    {
+      "adaptive": true,
+      "bandwidthKbps": 2000,
+      "rttMs": 80,
+      "durationSeconds": 60,
+      "sentFps": 6.85,
+      "dropped": 1389,
+      "kbps": 1452.1306666666667,
+      "maxQueuedBytes": 122203.33333333339,
+      "estimatedTransportP95Ms": 354.682666666667,
+      "finalSettings": {
+        "fps": 8,
+        "scale": 0.4,
+        "quality": 0.4
+      }
+    }
+  ],
+  "limitations": "Software FFmpeg qscale differs from idb quality. SSIM is image similarity, not a text-readability test. Model estimates transport queue delay only, not input responsiveness or capture-to-display latency. No packet loss or real TCP."
+}

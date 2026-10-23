@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { DesktopApi, InputEvent, StreamMeta, Point } from '../shared/types';
 import { keyCode, normalizedPoint } from './input';
+import { subscribeVideo } from './media-playback';
 
 const apps = [
   ['Messages', MessageCircle, '#28c469'],
@@ -200,49 +201,10 @@ export function DeviceStage({
   };
   useEffect(() => {
     if (demo || !api || !connected) return;
-    let disposed = false,
-      busy = false,
-      latest: Uint8Array | undefined,
-      count = 0;
-    const paint = async () => {
-      if (busy || !latest || disposed) return;
-      busy = true;
-      const frame = latest;
-      latest = undefined;
-      try {
-        const bitmap = await createImageBitmap(
-          new Blob([new Uint8Array(frame)], { type: 'image/jpeg' }),
-        );
-        const el = canvas.current;
-        if (!disposed && el) {
-          if (el.width !== bitmap.width || el.height !== bitmap.height) {
-            el.width = bitmap.width;
-            el.height = bitmap.height;
-          }
-          el.getContext('2d')?.drawImage(bitmap, 0, 0);
-          count++;
-        }
-        bitmap.close();
-      } catch {
-        if (!disposed) onError('Cannot decode the simulator video. Reconnect to try again.');
-      } finally {
-        busy = false;
-        if (latest && !disposed) void paint();
-      }
-    };
-    const off = api.onFrame((frame) => {
-      latest = frame;
-      void paint();
-    });
-    const timer = setInterval(() => {
-      onFps(count);
-      count = 0;
-    }, 1000);
+    const off = subscribeVideo(api, () => canvas.current, onFps, onError);
     window.addEventListener('blur', release);
     return () => {
-      disposed = true;
       off();
-      clearInterval(timer);
       release();
       window.removeEventListener('blur', release);
     };

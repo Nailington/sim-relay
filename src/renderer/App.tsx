@@ -39,6 +39,7 @@ import {
 import type { HostEntry, Inventory, Simulator, StreamMeta, InputEvent } from '../shared/types';
 import { Busy, IconButton, Modal } from './components';
 import { DeviceStage } from './DeviceStage';
+import { MediaControls } from './MediaControls';
 import { demoHosts, demoInventory } from './demo';
 import { PairModal, CreateModal, HostModal, ActionModal } from './dialogs';
 
@@ -681,6 +682,12 @@ export function App() {
                   <div className="inspector-title">
                     <Settings2 size={15} /> Simulator controls
                   </div>
+                  <MediaControls
+                    api={demo ? undefined : api}
+                    connected={stream === 'live'}
+                    maxFps={targetFps}
+                    onError={reportError}
+                  />
                   <div className="control-group">
                     <span className="control-label">HARDWARE</span>
                     <div className="control-grid">

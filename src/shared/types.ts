@@ -1,3 +1,4 @@
+import type { MediaNotice, QualityLimits, VideoFeedback } from './media';
 export interface HostEntry {
   id: string;
   name: string;
@@ -101,8 +102,18 @@ export interface DesktopApi {
   connect(id: string, udid: string, fps: number): Promise<void>;
   disconnect(): Promise<void>;
   input(event: InputEvent): void;
-  onFrame(callback: (frame: Uint8Array) => void): () => void;
+  onFrame(callback: (frame: Uint8Array) => void | Promise<void>): () => void;
   onNotice(callback: (notice: StreamNotice) => void): () => void;
+  setQuality(limits: QualityLimits): Promise<void>;
+  reportVideoFeedback(feedback: VideoFeedback): void;
+  startRecording(): Promise<void>;
+  stopRecording(): Promise<void>;
+  discardRecording(): Promise<void>;
+  saveRecording(): Promise<boolean>;
+  startAudio(hostAudioConsent: boolean): Promise<void>;
+  stopAudio(): Promise<void>;
+  onAudio(callback: (pcm: Uint8Array) => void): () => void;
+  onMediaNotice(callback: (notice: MediaNotice) => void): () => void;
   hostStatus(): Promise<HostStatus>;
   startHost(): Promise<HostStatus>;
   stopHost(): Promise<void>;
