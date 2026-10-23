@@ -2,9 +2,9 @@
 cask "sim-relay" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.1.2"
-  sha256 arm:   "2541045f09568fcd3a0a17dbf44cedccb0d3a95a091a14ead168cb4ff8e37ee2",
-         intel: "446f8c77bed97bdba628bc9f61254cb8a5a39781744ab5728b6c2082fcc8c317"
+  version "0.1.3"
+  sha256 arm:   "159499ae3c86b6384dec7869b855df421340949be9b190623fcaea2ab38a261b",
+         intel: "3b84236c9210116033b047410474350887e5f7735c3cc2ba144a2271310ba607"
 
   url "https://github.com/Nailington/sim-relay/releases/download/v#{version}/Sim-Relay-#{version}-mac-#{arch}.dmg"
   name "Sim Relay"
@@ -16,8 +16,11 @@ cask "sim-relay" do
   app "Sim Relay.app"
   binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"
 
+  uninstall launchctl: "dev.simrelay.host"
+
   zap trash: [
     "~/Library/Application Support/Sim Relay",
     "~/Library/Application Support/ios-sim-stream",
+    "~/Library/Logs/Sim Relay",
   ]
 end
