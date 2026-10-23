@@ -10,6 +10,19 @@ const api: DesktopApi = {
   request: (id, method, path, body) => ipcRenderer.invoke('request', id, method, path, body),
   connect: (id, udid, fps) => ipcRenderer.invoke('connect', id, udid, fps),
   disconnect: () => ipcRenderer.invoke('disconnect'),
+  retry: () => ipcRenderer.invoke('retry'),
+  popOut: (id, udid, fps) => ipcRenderer.invoke('pop-out', id, udid, fps),
+  displayContext: () => ipcRenderer.invoke('display-context'),
+  returnDisplay: () => ipcRenderer.invoke('return-display'),
+  windowAction: (action) => ipcRenderer.invoke('window-action', action),
+  onReturnDisplay: (callback) => {
+    const listener = (
+      _event: unknown,
+      context: Parameters<Parameters<DesktopApi['onReturnDisplay']>[0]>[0],
+    ) => callback(context);
+    ipcRenderer.on('return-display', listener);
+    return () => ipcRenderer.removeListener('return-display', listener);
+  },
   input: (event) => ipcRenderer.send('input', event),
   onFrame: (callback) => {
     const listener = (_event: unknown, data: Uint8Array) => callback(data);
