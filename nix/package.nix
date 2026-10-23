@@ -34,7 +34,7 @@ buildNpmPackage {
   };
 
   nodejs = nodejs_24;
-  npmDepsHash = "sha256-Q/GCXFruljuvrhK9Mj1nbY6egGNBsAtYYkNbc6SnRr0=";
+  npmDepsHash = "sha256-1M2d2rGMDDpGOmIWO8BVlDSLid//fjiXiV5LI96RXpI=";
   ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
 
   nativeBuildInputs = [
