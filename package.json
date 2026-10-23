@@ -16,6 +16,7 @@
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "check": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.*",
+    "test:browser-renderer": "vite build && node --import tsx tests/browser-renderer-smoke.ts",
     "package": "npm run build && electron-builder",
     "package:dir": "npm run build && electron-builder --dir",
     "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs"

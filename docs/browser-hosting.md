@@ -103,3 +103,10 @@ routing, logout cleanup that leaves the other stream active, rejected cross-orig
 disallowed destinations, certificate-pin failure, and inaccessible state files. Native
 simulator video/audio and physical touch-device/browser combinations still need native
 verification. Run `npm test` for the transport tests and `npm run web -- --help` for settings.
+
+`npm run test:browser-renderer` builds the actual React frontend and mounts it in headless
+Electron with a deferred fake API. It selects and connects Mac B while saved Mac A's
+inventory is pending, then resolves or rejects A's request. Assertions cover the visible
+host and simulator, live action routing, frame rate, and saved preferences. This checks
+renderer state transitions, not native simulator capture. On NixOS run from `nix develop`
+so Electron uses the Nix runtime; no Mac or simulator is required.
