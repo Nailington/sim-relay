@@ -22,7 +22,11 @@ export function tlsOptions(profile: Profile) {
   return {
     // Shared agents can resume TLS without re-running checkServerIdentity on older Node releases.
     agent: false as const,
+    rejectUnauthorized: true,
     ca: profile.certificate,
+    // Trust the verified leaf directly. Electron/BoringSSL otherwise rejects host
+    // certificates without CA privileges before it reaches the fingerprint check.
+    allowPartialTrustChain: true,
     checkServerIdentity: (_host: string, cert: { fingerprint256: string }) =>
       cert.fingerprint256 === profile.fingerprint
         ? undefined
