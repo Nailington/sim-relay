@@ -72,6 +72,7 @@ export function MediaControls({
       playback.current?.close();
       playback.current = undefined;
       setAudio(false);
+      setCapabilities(undefined);
       setRecording({ phase: 'idle' });
       setMetrics(undefined);
       setLimits(defaultQuality());
