@@ -1,15 +1,20 @@
 import { RelaySession, SessionFailure, type StreamSocket } from '../electron/session';
 import type { Profile, StreamNotice } from '../shared/types';
 import { BrowserMedia } from './browser-media';
+import type { BrowserAccount } from './browser-account';
 
 /** Adapt browser sockets to the shared retry/cancellation lifecycle without Node dependencies. */
 export function browserSession(
   get: (id: string) => Profile,
   notice: (value: StreamNotice) => void,
+  account: BrowserAccount,
+  resetRevision: () => string | null,
 ) {
   let socket: WebSocket | undefined;
   let connectedProfile: Profile | undefined;
+  let openingProfile: Profile | undefined;
   const media = new BrowserMedia((value) => {
+    account.assertCurrent();
     if (socket?.readyState !== WebSocket.OPEN) throw new Error('Connect to a simulator first.');
     if (socket.bufferedAmount > 64 * 1024)
       throw new Error('The connection is busy. Wait and retry.');
@@ -20,16 +25,33 @@ export function browserSession(
     frame: (frame) => media.video(frame),
     message: (data, binary) => media.message(binary ? new Uint8Array(data) : data.toString()),
     open: async (target, signal) => {
+      const reset = resetRevision();
       let profile: Profile;
       try {
         profile = get(target.hostId);
+        openingProfile = profile;
       } catch (error) {
         throw new SessionFailure((error as Error).message, true);
       }
-      const auth = await fetch('/api/session', { credentials: 'same-origin', signal });
-      if (auth.status === 401 || auth.status === 403)
-        throw new SessionFailure('Sign in to this hosting service again before connecting.', true);
+      const currentProfile = () => {
+        account.assertCurrent();
+        const current = get(target.hostId);
+        if (
+          reset !== resetRevision() ||
+          current.token !== profile.token ||
+          current.certificate !== profile.certificate ||
+          current.fingerprint !== profile.fingerprint ||
+          current.url !== profile.url
+        )
+          throw new SessionFailure(
+            'This browser’s saved pairing changed. Select the Mac and connect again.',
+            true,
+          );
+        return current;
+      };
+      await account.verify(signal);
       signal.throwIfAborted();
+      currentProfile();
       const url = new URL('/api/stream', location.href);
       url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const current = new WebSocket(url);
@@ -42,6 +64,7 @@ export function browserSession(
       const cleanup = () => {
         clearTimeout(timer);
         signal.removeEventListener('abort', abort);
+        if (openingProfile === profile) openingProfile = undefined;
         if (socket === current) {
           socket = undefined;
           connectedProfile = undefined;
@@ -90,14 +113,29 @@ export function browserSession(
           reject(new SessionFailure('Display connection canceled.'));
           return;
         }
-        current.onopen = () => {
-          if (signal.aborted) return abort();
-          opened = true;
-          socket = current;
-          connectedProfile = profile;
-          media.open(target.fps);
-          current.send(JSON.stringify({ profile, udid: target.udid, fps: target.fps }));
-          resolve(adapter);
+        current.onopen = async () => {
+          try {
+            await account.verify(signal);
+            signal.throwIfAborted();
+            const checked = currentProfile();
+            opened = true;
+            socket = current;
+            connectedProfile = checked;
+            openingProfile = undefined;
+            media.open(target.fps);
+            current.send(
+              JSON.stringify({
+                user: account.user,
+                profile: checked,
+                udid: target.udid,
+                fps: target.fps,
+              }),
+            );
+            resolve(adapter);
+          } catch (error) {
+            abort();
+            reject(error);
+          }
         };
         current.onmessage = (event) => {
           if (socket !== current || signal.aborted) return;
@@ -139,5 +177,5 @@ export function browserSession(
       });
     },
   });
-  return { session, media, profile: () => connectedProfile };
+  return { session, media, profile: () => connectedProfile ?? openingProfile };
 }

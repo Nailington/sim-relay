@@ -124,7 +124,14 @@ profile or execute scripts at this origin may read its saved Mac credentials. Us
 browser profile on shared devices, and use **Clear saved setup** before leaving. Signing
 out retains the saved setup for the next sign-in. Reset removes this user's setup from this
 browser; it does not affect other profiles/devices or revoke the credential on the Mac.
+Reset also cancels opening connections and prevents pairing exchanges started before the reset
+from saving credentials afterward. Start a new pairing exchange to save a Mac again.
 Revoke access on the Mac when disposing of an old browser profile.
+
+Signing in or out updates sibling tabs in the same browser profile. Account changes close
+old connections and open a fresh workspace for the current account, retaining each user’s
+saved setup separately. Requests and stream startup are bound to the workspace’s sign-in;
+old workspace references cannot act under a replacement sign-in cookie.
 
 Storage is not synchronized between devices or browsers. Clearing site data, using a
 private session, browser eviction, or switching the deployment's origin can remove or
@@ -153,5 +160,9 @@ persistence without auto-connect, revocation, retry cancellation, and reset prop
 an existing tab in the same browser context. Recording bytes and the File System Access
 sink are test fixtures; this does not verify native capture, a real OS file picker, or audio
 capture. On NixOS run from `nix develop` so Electron uses the Nix runtime; no Mac or simulator
-is required. Linux CI runs both browser checks and the separate native Electron fake-host
-session smoke.
+is required. A separate shared-partition Chromium smoke uses the actual React sign-in and
+reset controls to hold opening authentication across reset/account changes, suppress reset
+event delivery, verify fresh account mounts and permanently invalid old APIs, and switch
+cookies between preflight and action dispatch. Unit coverage also holds a pairing response
+across reset and verifies that a fresh pairing can succeed afterward. Linux CI runs these
+browser checks and the separate native Electron fake-host session smoke.

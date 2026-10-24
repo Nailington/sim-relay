@@ -12,6 +12,7 @@ import { clientAdminRequest } from '../src/host/client-admin';
 import type { InputEvent } from '../src/shared/types';
 
 const directory = await mkdtemp(path.join(tmpdir(), 'relay-browser-workspaces-'));
+const identitySmoke = process.argv[2] === 'identity';
 const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-123456789ABC'];
 const events: { udid: string; event: InputEvent }[] = [];
 const closed: string[] = [];
@@ -82,7 +83,11 @@ try {
         '--no-sandbox',
         '--ozone-platform=headless',
         '--disable-gpu',
-        path.resolve('tests/electron-browser-workspaces.cjs'),
+        path.resolve(
+          identitySmoke
+            ? 'tests/electron-browser-identity.cjs'
+            : 'tests/electron-browser-workspaces.cjs',
+        ),
       ],
       {
         env: {
@@ -132,24 +137,33 @@ try {
       clearTimeout(timer);
       try {
         assert.equal(code, 0);
-        assert.match(output, /BROWSER_WORKSPACES_SMOKE_OK/);
+        assert.match(
+          output,
+          identitySmoke ? /BROWSER_IDENTITY_SMOKE_OK/ : /BROWSER_WORKSPACES_SMOKE_OK/,
+        );
         resolve();
       } catch (error) {
         reject(error);
       }
     });
   });
-  assert.ok(
-    events.some((e) => e.udid === ids[0] && e.event.type === 'button' && e.event.button === 'HOME'),
-  );
-  assert.ok(
-    events.some((e) => e.udid === ids[1] && e.event.type === 'button' && e.event.button === 'LOCK'),
-  );
-  assert.ok(
-    !events.some(
-      (e) => e.udid === ids[1] && e.event.type === 'button' && e.event.button === 'HOME',
-    ),
-  );
+  if (!identitySmoke) {
+    assert.ok(
+      events.some(
+        (e) => e.udid === ids[0] && e.event.type === 'button' && e.event.button === 'HOME',
+      ),
+    );
+    assert.ok(
+      events.some(
+        (e) => e.udid === ids[1] && e.event.type === 'button' && e.event.button === 'LOCK',
+      ),
+    );
+    assert.ok(
+      !events.some(
+        (e) => e.udid === ids[1] && e.event.type === 'button' && e.event.button === 'HOME',
+      ),
+    );
+  }
 } finally {
   await web.close();
   await host.close();

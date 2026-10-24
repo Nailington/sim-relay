@@ -268,7 +268,10 @@ async function connect(window, profile, index) {
   );
   assert.equal(await js(bob, `window.relay.saveRecording()`), false);
   const pending = await js(bob, `window.downloadLinks.at(-1)`);
-  await js(bob, `fetch('/api/logout',{method:'POST'}).then(()=>undefined)`);
+  await js(
+    bob,
+    `fetch('/api/logout',{method:'POST',headers:{'X-Sim-Relay-User':'bob'}}).then(()=>undefined)`,
+  );
   assert.equal(await js(bob, `fetch(${JSON.stringify(pending)}).then(r=>r.status)`), 401);
   await js(
     bob,

@@ -1,7 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { App } from './App';
 import { DisplayWindow } from './DisplayWindow';
-import { clearBrowserWorkspace, createBrowserApi, disposeBrowserApi, webCall } from './browser-api';
+import {
+  createBrowserApi,
+  disposeBrowserApi,
+  resetBrowserApi,
+  signOutBrowserApi,
+  webCall,
+} from './browser-api';
+import {
+  announceBrowserAccount,
+  browserAccountSnapshot,
+  browserAccountUser,
+  watchBrowserAccount,
+} from './browser-account';
+import type { DesktopApi } from '../shared/types';
 import './browser.css';
 
 export function BrowserGate() {
@@ -11,26 +24,91 @@ export function BrowserGate() {
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [confirmReset, setConfirmReset] = useState(false);
-  const open = (name: string) => {
-    window.relay = createBrowserApi(name);
+  const relay = useRef<DesktopApi | undefined>(undefined);
+  const generation = useRef(0);
+  const announcing = useRef(false);
+  const [workspaceKey, setWorkspaceKey] = useState('');
+  const closeWorkspace = () => {
+    const old = relay.current;
+    disposeBrowserApi(old);
+    if (window.relay === old) window.relay = undefined;
+    relay.current = undefined;
+  };
+  const announce = (name?: string) => {
+    announcing.current = true;
+    try {
+      announceBrowserAccount(name);
+    } finally {
+      announcing.current = false;
+    }
+  };
+  const open = (name: string, renew = false) => {
+    closeWorkspace();
+    if (renew || browserAccountUser() !== name) announce(name);
+    const api = createBrowserApi(name, () => {
+      if (relay.current !== api) return;
+      generation.current++;
+      closeWorkspace();
+      setConfirmReset(false);
+      setMode('login');
+      setError('Your sign-in changed. Sign in again to continue.');
+    });
+    relay.current = api;
+    window.relay = api;
     setUser(name);
+    setWorkspaceKey(crypto.randomUUID());
+    setConfirmReset(false);
+    setError('');
     setMode('workspace');
   };
   useEffect(() => {
     let active = true;
-    void fetch('/api/session', { credentials: 'same-origin' })
-      .then((response) => response.json())
-      .then((value) => {
-        if (!active) return;
-        if (value.mode !== 'web') setMode('demo');
-        else if (value.user) open(value.user);
-        else setMode('login');
-      })
-      .catch(() => {
-        if (active) setMode('demo');
-      });
+    const lifetime = new AbortController();
+    let seen = browserAccountSnapshot();
+    const refresh = () => {
+      const attempt = ++generation.current;
+      closeWorkspace();
+      setMode('loading');
+      const snapshot = browserAccountSnapshot();
+      void fetch('/api/session', { credentials: 'same-origin', signal: lifetime.signal })
+        .then((response) => response.json())
+        .then((value) => {
+          if (!active || attempt !== generation.current) return;
+          if (snapshot !== browserAccountSnapshot()) {
+            refresh();
+            return;
+          }
+          if (value.mode !== 'web') setMode('demo');
+          else if (value.user) open(value.user);
+          else setMode('login');
+        })
+        .catch(() => {
+          if (active && attempt === generation.current) {
+            setMode(import.meta.env.DEV ? 'demo' : 'login');
+            setError('Cannot reach the hosting service. Check your connection and sign in again.');
+          }
+        });
+    };
+    watchBrowserAccount((snapshot) => {
+      if (snapshot === seen) return;
+      seen = snapshot;
+      if (announcing.current) return;
+      generation.current++;
+      closeWorkspace();
+      setConfirmReset(false);
+      setPassword('');
+      if (browserAccountUser(snapshot)) refresh();
+      else {
+        setMode('login');
+        setError('');
+      }
+    }, lifetime.signal);
+    refresh();
     return () => {
       active = false;
+      generation.current++;
+      lifetime.abort();
+      closeWorkspace();
     };
   }, []);
   if (mode === 'loading')
@@ -46,14 +124,21 @@ export function BrowserGate() {
         <form
           onSubmit={(event) => {
             event.preventDefault();
+            if (busy) return;
             setBusy(true);
             setError('');
+            const attempt = ++generation.current;
+            closeWorkspace();
+            announce();
             void webCall<{ user: string }>('login', { user, password })
               .then((value) => {
+                if (attempt !== generation.current) return;
                 setPassword('');
-                open(value.user);
+                open(value.user, true);
               })
-              .catch((failure: Error) => setError(failure.message))
+              .catch((failure: Error) => {
+                if (attempt === generation.current) setError(failure.message);
+              })
               .finally(() => setBusy(false));
           }}
         >
@@ -97,17 +182,17 @@ export function BrowserGate() {
         <button
           disabled={busy}
           onClick={() => {
+            const api = relay.current;
+            if (!api) return;
             setBusy(true);
             setError('');
-            void window.relay
-              ?.disconnect()
-              .then(() => webCall('logout'))
+            void signOutBrowserApi(api)
               .then(() => {
-                disposeBrowserApi(window.relay);
-                window.relay = undefined;
-                setMode('login');
+                if (!relay.current) setMode('login');
               })
-              .catch((failure: Error) => setError(failure.message))
+              .catch((failure: Error) => {
+                if (!relay.current || relay.current === api) setError(failure.message);
+              })
               .finally(() => setBusy(false));
           }}
         >
@@ -127,9 +212,9 @@ export function BrowserGate() {
           </p>
           <button
             onClick={() => {
-              void window.relay
-                ?.disconnect()
-                .then(() => clearBrowserWorkspace(user))
+              const api = relay.current;
+              if (!api) return;
+              void resetBrowserApi(api)
                 .then(() => location.reload())
                 .catch(() =>
                   setError(
@@ -144,7 +229,11 @@ export function BrowserGate() {
         </div>
       )}
       <div className="browser-app">
-        {new URLSearchParams(location.search).has('display') ? <DisplayWindow /> : <App />}
+        {new URLSearchParams(location.search).has('display') ? (
+          <DisplayWindow key={workspaceKey} />
+        ) : (
+          <App key={workspaceKey} />
+        )}
       </div>
     </div>
   );

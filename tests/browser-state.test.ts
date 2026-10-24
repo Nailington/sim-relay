@@ -4,8 +4,9 @@ import {
   browserStorageKey,
   clearBrowserWorkspace,
   createBrowserApi,
+  disposeBrowserApi,
 } from '../src/renderer/browser-api';
-import type { Profile, Probe } from '../src/shared/types';
+import type { Profile, Probe, DesktopApi } from '../src/shared/types';
 
 test('reset is visible to existing tabs and pairing cannot resurrect their stale credentials', async () => {
   const data = new Map<string, string>();
@@ -27,6 +28,8 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
     ]),
   );
   const sockets: FakeSocket[] = [];
+  const apis: DesktopApi[] = [];
+  let signedInUser = 'alice';
   class FakeSocket {
     static OPEN = 1;
     readyState = 0;
@@ -87,7 +90,7 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
       fetch: {
         configurable: true,
         value: async (_url: string, options: { body: string }) => {
-          if (_url === '/api/session') return new Response(JSON.stringify({ user: 'alice' }));
+          if (_url === '/api/session') return new Response(JSON.stringify({ user: signedInUser }));
           const value = JSON.parse(options.body);
           return new Response(
             JSON.stringify({ ...value.profile, token: 'new-private-credential' }),
@@ -101,6 +104,7 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
     const firstTab = createBrowserApi('alice'),
       secondTab = createBrowserApi('alice'),
       otherUser = createBrowserApi('bob');
+    apis.push(firstTab, secondTab, otherUser);
     assert.equal((await secondTab.hosts()).length, 1);
     await secondTab.connect(profile.id, '218f5525-50cf-4313-8f44-d58d64811d39', 30);
     assert.equal(sockets[0].readyState, 1);
@@ -111,7 +115,9 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
     assert.equal(sockets[0].readyState, 3, 'reset disconnects the affected tab transport');
     assert.deepEqual(await firstTab.hosts(), []);
     assert.deepEqual(await secondTab.hosts(), []);
+    signedInUser = 'bob';
     assert.equal((await otherUser.hosts()).length, 1, 'another user namespace is unaffected');
+    signedInUser = 'alice';
     await secondTab.pair(probe, 'single-use-code');
     const saved = storage.getItem(browserStorageKey('alice'))!;
     assert.equal(saved.includes('old-private-credential'), false);
@@ -123,8 +129,93 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
       assert.deepEqual(firstTab.workspace!.restore(), {});
     }
   } finally {
+    for (const api of apis) disposeBrowserApi(api);
     for (const [key, descriptor] of originals) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+test('an in-flight pairing cannot append a credential after another tab explicitly resets setup', async () => {
+  const originals = new Map(
+    ['localStorage', 'window', 'document', 'location', 'fetch'].map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  const data = new Map<string, string>();
+  let api: DesktopApi | undefined;
+  let finishPair!: (value: Response) => void;
+  let pairStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    pairStarted = resolve;
+  });
+  let pending = true;
+  const profile: Profile = {
+    id: '218f5525-50cf-4313-8f44-d58d64811d38',
+    name: 'New Mac',
+    url: 'https://new.test:49300',
+    fingerprint: 'pin',
+    certificate: 'certificate',
+    token: 'new-test-credential',
+    source: 'saved',
+  };
+  const probe: Probe = {
+    url: profile.url,
+    fingerprint: profile.fingerprint,
+    certificate: profile.certificate,
+    info: { name: profile.name, version: '0.1.5', platform: 'macOS', xcode: true, companion: true },
+  };
+  try {
+    Object.defineProperties(globalThis, {
+      localStorage: {
+        configurable: true,
+        value: {
+          getItem: (key: string) => data.get(key) ?? null,
+          setItem: (key: string, value: string) => data.set(key, value),
+          removeItem: (key: string) => data.delete(key),
+        },
+      },
+      window: { configurable: true, value: new EventTarget() },
+      document: { configurable: true, value: new EventTarget() },
+      location: {
+        configurable: true,
+        value: { href: 'http://127.0.0.1:49301', protocol: 'http:' },
+      },
+      fetch: {
+        configurable: true,
+        value: async (url: string) => {
+          if (url === '/api/session') return new Response(JSON.stringify({ user: 'alice' }));
+          if (pending) {
+            pairStarted();
+            return new Promise<Response>((resolve) => {
+              finishPair = resolve;
+            });
+          }
+          return new Response(JSON.stringify(profile));
+        },
+      },
+    });
+    api = createBrowserApi('alice');
+    const pairing = api.pair(probe, 'pairing-code');
+    const rejected = assert.rejects(pairing, /cleared while pairing/);
+    await started;
+    await clearBrowserWorkspace('alice');
+    finishPair(new Response(JSON.stringify(profile)));
+    await rejected;
+    assert.equal(data.get(browserStorageKey('alice')), undefined);
+    pending = false;
+    await api.pair(probe, 'fresh-pairing-code');
+    assert.equal(
+      (await api.hosts())[0].id,
+      profile.id,
+      'a new explicit pairing after reset can save normally',
+    );
+  } finally {
+    disposeBrowserApi(api);
+    for (const [key, original] of originals) {
+      if (original) Object.defineProperty(globalThis, key, original);
       else Reflect.deleteProperty(globalThis, key);
     }
   }
