@@ -88,6 +88,7 @@ export function App() {
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>({ phase: 'idle' });
   const [fps, setFps] = useState(0);
   const [targetFps, setTargetFps] = useState(30);
+  const [adaptive, setAdaptive] = useState(false);
   const [homeSignal, setHomeSignal] = useState(0);
   const [dark, setDark] = useState<boolean>();
   const [zoom, setZoom] = useState(false);
@@ -100,6 +101,46 @@ export function App() {
   currentHost.current = host?.id;
   const connectionAttempt = useRef(0);
   const searchInput = useRef<HTMLInputElement>(null);
+  const restoredWorkspace = useRef(false);
+  const selectionGeneration = useRef(0);
+  useEffect(() => {
+    if (!api?.workspace || restoredWorkspace.current) return;
+    restoredWorkspace.current = true;
+    const saved = api.workspace.restore();
+    const selection = selectionGeneration.current;
+    let cancelled = false;
+    void api
+      .hosts()
+      .then(async (entries) => {
+        const entry = entries.find((candidate) => candidate.id === saved.hostId);
+        if (!entry) return;
+        const value = await api.request<Inventory>(entry.id, 'GET', '/devices');
+        if (cancelled || selection !== selectionGeneration.current) return;
+        setHost(entry);
+        setInventory(value);
+        setSelectedId(
+          value.devices.some((device) => device.udid === saved.deviceId)
+            ? saved.deviceId!
+            : (value.devices[0]?.udid ?? ''),
+        );
+        if ([15, 30, 60].includes(saved.fps ?? 0)) setTargetFps(saved.fps!);
+      })
+      .catch((failure: Error) => {
+        if (!cancelled && selection === selectionGeneration.current) setError(failure.message);
+      });
+    return () => {
+      cancelled = true;
+      restoredWorkspace.current = false;
+    };
+  }, [api]);
+  useEffect(() => {
+    if (!api?.workspace || !host) return;
+    try {
+      api.workspace.save({ hostId: host.id, deviceId: selectedId, fps: targetFps });
+    } catch {
+      setError('Browser preferences could not be saved. Allow storage for this site.');
+    }
+  }, [api, host, selectedId, targetFps]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !modal && zoom) {
@@ -188,7 +229,10 @@ export function App() {
   useEffect(() => {
     if (!api) return;
     const restore = (context: DisplayContext) => {
-      connectionAttempt.current++;
+      const selection = ++selectionGeneration.current;
+      const attempt = ++connectionAttempt.current;
+      const current = () =>
+        selectionGeneration.current === selection && connectionAttempt.current === attempt;
       setDemo(false);
       setHost(context.host);
       currentHost.current = context.host.id;
@@ -201,13 +245,15 @@ export function App() {
       void api
         .request<Inventory>(context.host.id, 'GET', '/devices')
         .then((value) => {
-          if (currentHost.current === context.host.id) setInventory(value);
+          if (current()) setInventory(value);
         })
-        .catch((e) => setError(e.message));
+        .catch((e) => {
+          if (current()) setError(e.message);
+        });
       if (context.sessionActive)
-        void api
-          .connect(context.host.id, context.device.udid, context.fps)
-          .catch((e) => setError(e.message));
+        void api.connect(context.host.id, context.device.udid, context.fps).catch((e) => {
+          if (current()) setError(e.message);
+        });
     };
     const off = api.onReturnDisplay(restore);
     void api
@@ -225,6 +271,7 @@ export function App() {
     return value;
   };
   const stopStream = async () => {
+    selectionGeneration.current++;
     connectionAttempt.current++;
     await api?.disconnect();
     setStream('off');
@@ -235,6 +282,7 @@ export function App() {
   };
   const chooseHost = async (entry: HostEntry) => {
     if (busy) return;
+    selectionGeneration.current++;
     if (entry.source === 'discovered') {
       setPairUrl(entry.url);
       setModal('pair');
@@ -937,6 +985,7 @@ export function App() {
                         maxFps={targetFps}
                         onError={reportError}
                         onRecordingChange={setRecordingStatus}
+                        onAdaptiveChange={setAdaptive}
                       />
                     </details>
                   )}
@@ -947,7 +996,9 @@ export function App() {
                       <select
                         aria-label="Requested frame rate"
                         value={targetFps}
-                        disabled={!!busy || stream !== 'off'}
+                        disabled={
+                          !!busy || stream === 'connecting' || (stream === 'live' && adaptive)
+                        }
                         onChange={(e) => {
                           const rate = Number(e.target.value);
                           setTargetFps(rate);
@@ -959,6 +1010,9 @@ export function App() {
                         <option value={60}>60 fps</option>
                       </select>
                     </label>
+                    {stream === 'live' && adaptive && (
+                      <p className="field-hint">Adjust live video in Recording, audio & quality.</p>
+                    )}
                     <div className="quality-note">
                       <span
                         className={

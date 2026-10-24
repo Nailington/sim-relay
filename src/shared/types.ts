@@ -112,6 +112,10 @@ export interface HostStatus {
   addresses?: string[];
 }
 export interface DesktopApi {
+  workspace?: {
+    restore(): { hostId?: string; deviceId?: string; fps?: number };
+    save(value: { hostId?: string; deviceId?: string; fps?: number }): void;
+  };
   diagnostics?(hostId?: string): Promise<import('./diagnostics').DiagnosticReport>;
   exportDiagnostics?(report: import('./diagnostics').DiagnosticReport): Promise<boolean>;
   copyText(text: string): Promise<void>;

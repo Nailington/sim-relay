@@ -59,6 +59,15 @@ jobs:
         if: runner.os == 'Linux'
         run: npm test
       - run: npm run build
+      - name: Test browser renderer hydration
+        if: runner.os == 'Linux'
+        run: node --import tsx tests/browser-renderer-smoke.ts
+      - name: Test isolated browser workspaces with a fake Mac host
+        if: runner.os == 'Linux'
+        run: node --import tsx tests/browser-workspace-smoke.ts
+      - name: Test shared browser account and reset races
+        if: runner.os == 'Linux'
+        run: node --import tsx tests/browser-workspace-smoke.ts identity
       - name: Test native display sessions with a fake Mac host
         if: runner.os == 'Linux'
         run: node --import tsx tests/native-session-smoke.ts

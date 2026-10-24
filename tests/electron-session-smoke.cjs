@@ -132,6 +132,7 @@ const ids = [
   await wait(() => a.isDestroyed());
   assert.equal(BrowserWindow.getAllWindows().length, 3);
   await wait(() => js(main, `document.body.innerText.includes('Native A')`));
+  await wait(() => js(main, `document.querySelector('.media-quality select')?.value==='manual'`));
   await js(main, `window.relay.input({type:'button',button:'VOLUME_UP'})`);
   main.setSize(1280, 800);
   await wait(() => js(main, 'innerWidth===1280'));

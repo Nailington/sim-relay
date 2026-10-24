@@ -12,6 +12,7 @@ export function DisplayWindow() {
   const api = window.relay!;
   const [context, setContext] = useState<DisplayContext>();
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>({ phase: 'idle' });
+  const [adaptive, setAdaptive] = useState(false);
   const [metadata, setMetadata] = useState<StreamMeta>();
   const [status, setStatus] = useState<StreamNotice['state']>('connecting');
   const [message, setMessage] = useState('Connecting display');
@@ -65,7 +66,11 @@ export function DisplayWindow() {
         if (value.sessionActive) await api.connect(value.host.id, value.device.udid, value.fps);
         else {
           setStatus('off');
-          setMessage('Display disconnected');
+          setMessage(
+            api.platform === 'web'
+              ? 'Display disconnected. Choose Connect display to continue. Moving browser displays stops audio and recording.'
+              : 'Display disconnected',
+          );
         }
       })
       .catch((e) => {
@@ -159,6 +164,7 @@ export function DisplayWindow() {
                 connected={status === 'live'}
                 maxFps={requested}
                 onRecordingChange={setRecordingStatus}
+                onAdaptiveChange={setAdaptive}
                 onError={reportError}
               />
             </div>
@@ -277,7 +283,10 @@ export function DisplayWindow() {
                 Requested frame rate
                 <select
                   value={requested}
-                  disabled={!!busy || (status !== 'off' && status !== 'failed')}
+                  disabled={
+                    !!busy ||
+                    (status !== 'off' && status !== 'failed' && !(status === 'live' && !adaptive))
+                  }
                   onChange={(e) => {
                     const rate = Number(e.target.value);
                     setRequested(rate);
@@ -294,6 +303,9 @@ export function DisplayWindow() {
                   ))}
                 </select>
               </label>
+              {status === 'live' && adaptive && (
+                <p className="field-hint">Adjust live video in the Media menu.</p>
+              )}
               <p role="status">{status === 'live' ? `${fps} frames decoded / second` : message}</p>
               <button disabled={!!busy} onClick={() => void connect()}>
                 {context.device.state === 'Booted' ? 'Connect display' : 'Start & connect'}
@@ -342,7 +354,7 @@ export function DisplayWindow() {
         </div>
       </header>
       <div className="display-connection" role="status">
-        {status === 'live' ? `Live · ${fps} decoded fps · ${requested} requested fps` : message}
+        {status === 'live' ? `Live · ${fps} decoded fps` : message}
         {(status === 'retrying' || status === 'failed') && (
           <>
             <button onClick={() => void act('Retrying connection', () => api.retry())}>
