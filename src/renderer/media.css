@@ -81,6 +81,8 @@
 }
 .recording-indicator {
   font-size: 12px;
-  color: #ff9393;
+  color: #a92e3c;
   font-variant-numeric: tabular-nums;
 }
+
+.display-menu > .display-media-panel { width: min(340px, calc(100vw - 24px)); padding: 14px; }

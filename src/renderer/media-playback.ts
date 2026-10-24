@@ -6,6 +6,7 @@ export function subscribeVideo(
   canvas: () => HTMLCanvasElement | null,
   onFps: (fps: number) => void,
   onError: (message: string) => void,
+  rotation: () => number = () => 0,
 ) {
   let disposed = false,
     count = 0,
@@ -20,11 +21,23 @@ export function subscribeVideo(
       bitmap = await createImageBitmap(new Blob([new Uint8Array(frame)], { type: 'image/jpeg' }));
       const el = canvas();
       if (!disposed && el) {
-        if (el.width !== bitmap.width || el.height !== bitmap.height) {
-          el.width = bitmap.width;
-          el.height = bitmap.height;
+        const angle = rotation();
+        const sideways = angle === 90 || angle === 270;
+        const width = sideways ? bitmap.height : bitmap.width;
+        const height = sideways ? bitmap.width : bitmap.height;
+        if (el.width !== width || el.height !== height) {
+          el.width = width;
+          el.height = height;
         }
-        el.getContext('2d')?.drawImage(bitmap, 0, 0);
+        const ctx = el.getContext('2d');
+        if (ctx) {
+          ctx.save();
+          ctx.clearRect(0, 0, width, height);
+          ctx.translate(width / 2, height / 2);
+          ctx.rotate(angle * Math.PI / 180);
+          ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
+          ctx.restore();
+        }
         count++;
         decodeTotal += performance.now() - start;
       }

@@ -5,18 +5,34 @@ import { randomUUID, X509Certificate } from 'node:crypto';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { hostUrl, probeHost, remoteRequest, tlsOptions } from './remote';
+import { hostname } from 'node:os';
+import { hostUrl, probeHost, remoteRequest, tlsOptions, pairRemoteClient } from './remote';
 import { startHost } from '../host/server';
 import { installHostCommand } from './host-command';
-import { inputSchema } from '../host/protocol';
+import { createDiagnostics } from './diagnostics';
+import { serializeReport, type DiagnosticStage } from '../shared/diagnostics';
 import { ClientMedia } from './media';
 import type { MediaAction, QualityLimits } from '../shared/media';
-import type { HostEntry, Profile, Probe, HostStatus } from '../shared/types';
+import { inputSchema } from '../host/protocol';
+import { RelaySession, SessionFailure, SessionRouter } from './session';
+import { parseHostInfo } from '../shared/host-info';
+import type {
+  DisplayContext,
+  HostEntry,
+  Profile,
+  Probe,
+  HostStatus,
+  Inventory,
+} from '../shared/types';
 
 let window: BrowserWindow;
+let workspaceContext: DisplayContext | undefined;
 let discovery: Bonjour | undefined;
-let stream: WebSocket | undefined;
-let clientMedia: ClientMedia | undefined;
+const windows = new Map<number, BrowserWindow>();
+const displays = new Map<number, DisplayContext>();
+const sessions = new SessionRouter<number, RelaySession>();
+const identities = new WeakMap<RelaySession, DisplayContext>();
+const mediaBySession = new WeakMap<RelaySession, ClientMedia>();
 let sharing: Awaited<ReturnType<typeof startHost>> | undefined;
 const profiles = new Map<string, Profile>(),
   discovered = new Map<string, HostEntry>();
@@ -28,6 +44,26 @@ const profile = (id: string) => {
   if (!result) throw new Error('Pair with this Mac first.');
   return result;
 };
+const diagnostics = createDiagnostics({
+  version: app.getVersion(),
+  platform: process.platform,
+  profile,
+  probe: probeHost,
+  inventory: async (entry) =>
+    JSON.parse((await remoteRequest(entry, 'GET', '/devices', undefined, 10000)).toString()),
+});
+function actionStage(channel: string, args: unknown[]): DiagnosticStage | undefined {
+  if (channel === 'probe') return 'network';
+  if (['save-screenshot', 'install-app'].includes(channel)) return 'action';
+  if (channel === 'pair') return 'authentication';
+  if (channel === 'connect') return 'stream';
+  if (channel === 'request')
+    return String(args[2]).endsWith('/boot')
+      ? 'boot'
+      : args[2] === '/devices' && args[1] === 'GET'
+        ? 'runtimes'
+        : 'action';
+}
 async function saveProfiles() {
   if (!secureStorageAvailable) return false;
   try {
@@ -49,20 +85,201 @@ async function saveProfiles() {
     return false;
   }
 }
-function disconnect() {
-  const cleanup = clientMedia?.close();
-  clientMedia = undefined;
-  const old = stream;
-  stream = undefined;
-  old?.close();
-  return cleanup ?? Promise.resolve();
+function disconnect(owner: BrowserWindow) {
+  const session = sessions.get(owner.id);
+  session?.disconnect();
+  return session ? mediaBySession.get(session)?.close() ?? Promise.resolve() : Promise.resolve();
 }
-function handle(channel: string, fn: (...args: any[]) => unknown) {
-  ipcMain.handle(channel, (event, ...args) => {
-    if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)
+function handle(channel: string, fn: (...args: any[]) => unknown, withWindow = false) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || !windows.has(owner.id) || event.senderFrame !== owner.webContents.mainFrame)
       throw new Error('Unknown app window.');
-    return fn(...args);
+    const stage = actionStage(channel, args);
+    const hostId =
+      ['connect', 'request', 'save-screenshot', 'install-app'].includes(channel) &&
+      typeof args[0] === 'string'
+        ? args[0]
+        : undefined;
+    try {
+      const result = await (withWindow ? fn(owner, ...args) : fn(...args));
+      if (stage) diagnostics.record(stage, 'passed', hostId);
+      return result;
+    } catch (error) {
+      if (stage) diagnostics.failure(error, stage, hostId);
+      throw error;
+    }
   });
+}
+function sessionFor(owner: BrowserWindow) {
+  let session = sessions.get(owner.id);
+  if (session) return session;
+  const send = (channel: string, value: unknown) => {
+    for (const [id, candidate] of sessions.entries()) {
+      if (candidate === session) {
+        const destination = windows.get(id);
+        if (destination && !destination.isDestroyed()) destination.webContents.send(channel, value);
+        break;
+      }
+    }
+  };
+  session = new RelaySession({
+    frame: (data) => mediaBySession.get(session!)?.video(Buffer.from(data)),
+    message: (data, binary) => mediaBySession.get(session!)?.message(Buffer.from(data), binary) ?? false,
+    notice: (notice) => {
+      const hostId = session?.target?.hostId;
+      if (notice.type === 'status' && notice.state === 'live')
+        diagnostics.record('stream', 'passed', hostId);
+      if ((notice.type === 'status' && notice.state === 'failed') || notice.type === 'error')
+        diagnostics.failure(notice.message, 'stream', hostId);
+      send('notice', notice);
+    },
+    open: async ({ hostId, udid, fps }, signal) => {
+      const p = profile(hostId);
+      parseHostInfo(
+        JSON.parse((await remoteRequest(p, 'GET', '/info', undefined, signal)).toString()),
+      );
+      const inventory = JSON.parse(
+        (await remoteRequest(p, 'GET', '/devices', undefined, signal)).toString(),
+      ) as Inventory;
+      const device = inventory.devices.find((d) => d.udid === udid);
+      if (!device)
+        throw new SessionFailure('This simulator no longer exists. Refresh the list.', true);
+      if (device.state !== 'Booted')
+        throw new SessionFailure(
+          'This simulator is not booted. Use Start & connect to start it explicitly.',
+          true,
+        );
+      identities.set(session!, { host: publicProfile(p), device, fps });
+      signal.throwIfAborted();
+      const url = new URL(`/stream/${udid}?fps=${fps}`, p.url);
+      url.protocol = 'wss:';
+      const socket = new WebSocket(url, {
+        ...tlsOptions(p),
+        headers: { Authorization: `Bearer ${p.token}` },
+        handshakeTimeout: 10000,
+        maxPayload: 16 * 1024 * 1024,
+        perMessageDeflate: false,
+      });
+      const media = new ClientMedia(socket, p, (channel, value) => {
+        if (mediaBySession.get(session!) === media) send(channel, value);
+      });
+      mediaBySession.set(session!, media);
+      socket.once('close', () => {
+        void media.close();
+        if (mediaBySession.get(session!) === media) mediaBySession.delete(session!);
+      });
+      // A canceled preflight can discard a just-created socket before RelaySession attaches.
+      socket.on('error', () => {});
+      socket.on('unexpected-response', (_req, response) => {
+        socket.emit(
+          'error',
+          new SessionFailure(
+            `Host returned HTTP ${response.statusCode}. Pair again for authorization errors.`,
+            [401, 403, 404, 409, 426].includes(response.statusCode ?? 0),
+          ),
+        );
+        response.destroy();
+        socket.terminate();
+      });
+      let pong = true;
+      socket.on('pong', () => {
+        pong = true;
+      });
+      const heartbeat = setInterval(() => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        if (!pong) socket.terminate();
+        else {
+          pong = false;
+          socket.ping();
+        }
+      }, 10000);
+      const startup = setTimeout(() => {
+        socket.emit('error', new Error('The simulator did not start streaming within 60 seconds.'));
+        socket.terminate();
+      }, 60000);
+      socket.on('message', () => clearTimeout(startup));
+      socket.once('close', () => {
+        clearInterval(heartbeat);
+        clearTimeout(startup);
+      });
+      return socket;
+    },
+  });
+  sessions.set(owner.id, session);
+  return session;
+}
+function selectionFor(session?: RelaySession): DisplayContext | undefined {
+  if (!session?.target) return;
+  const { hostId, udid, fps } = session.target;
+  const known = identities.get(session);
+  return {
+    host: publicProfile(profile(hostId)),
+    device: known?.device ?? { udid, name: udid, runtime: '', state: 'Unknown' },
+    fps,
+  };
+}
+function validateDisplay(udid: string, fps: number) {
+  if (!/^[\da-f-]{36}$/i.test(udid) || ![15, 30, 60].includes(fps))
+    throw new Error('Choose a simulator and frame rate.');
+}
+async function loadWindow(owner: BrowserWindow, display = false) {
+  if (process.env.SIM_RELAY_DEV === '1')
+    await owner.loadURL(`http://127.0.0.1:5173${display ? '?display=1' : ''}`);
+  else
+    await owner.loadFile(path.join(__dirname, '../dist/index.html'), {
+      query: display ? { display: '1' } : {},
+    });
+}
+function createWindow(display = false) {
+  const owner = new BrowserWindow({
+    width: display ? 680 : 1440,
+    height: display ? 900 : 960,
+    minWidth: display ? 360 : 980,
+    minHeight: display ? 360 : 680,
+    title: 'Sim Relay',
+    icon: path.join(__dirname, '../assets/app-icon.png'),
+    backgroundColor: '#101214',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  windows.set(owner.id, owner);
+  owner.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  owner.webContents.on('will-navigate', (event) => event.preventDefault());
+  owner.webContents.on('will-attach-webview', (event) => event.preventDefault());
+  owner.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
+    callback(false),
+  );
+  owner.on('blur', () => sessions.get(owner.id)?.release());
+  owner.on('closed', () => {
+    disconnect(owner);
+    sessions.delete(owner.id);
+    displays.delete(owner.id);
+    windows.delete(owner.id);
+  });
+  return owner;
+}
+async function detach(owner: BrowserWindow, context: DisplayContext) {
+  const display = createWindow(true);
+  displays.set(display.id, context);
+  const session = sessions.get(owner.id);
+  context.sessionActive = !!session?.active;
+  if (session?.target?.hostId === context.host.id && session.target.udid === context.device.udid) {
+    session.release();
+    sessions.move(owner.id, display.id);
+    mediaBySession.get(session)?.reparent();
+    owner.webContents.send('notice', {
+      type: 'status',
+      state: 'off',
+      message: 'Display moved to its own window.',
+    });
+  }
+  await loadWindow(display, true);
+  display.setTitle(`${context.device.name} — ${context.host.name} — Sim Relay`);
 }
 async function main() {
   await mkdir(app.getPath('userData'), { recursive: true });
@@ -113,6 +330,27 @@ async function main() {
       ),
   );
   handle('probe', probeHost);
+  handle('diagnostics', (id?: string) => {
+    if (id !== undefined && (typeof id !== 'string' || id.length > 1024))
+      throw new Error('Choose a paired Mac.');
+    return diagnostics.refresh(id);
+  });
+  handle(
+    'export-diagnostics',
+    async (owner: BrowserWindow, report: unknown) => {
+      // Revalidate the reviewed report in the main process. No arbitrary text/files.
+      const text = serializeReport(report);
+      const result = await dialog.showSaveDialog(owner, {
+        title: 'Save reviewed diagnostic report',
+        defaultPath: 'Sim-Relay-diagnostics.json',
+        filters: [{ name: 'Diagnostic report', extensions: ['json'] }],
+      });
+      if (result.canceled || !result.filePath) return false;
+      await writeFile(result.filePath, text, { mode: 0o600 });
+      return true;
+    },
+    true,
+  );
   handle('copy-text', (text: string) => {
     if (typeof text !== 'string' || text.length > 1000000)
       throw new Error('Text is too large to copy.');
@@ -127,7 +365,7 @@ async function main() {
     )
       throw new Error('Check the certificate and pairing token.');
     const previous = [...profiles.values()].find((p) => p.url === probe.url);
-    const entry: Profile = {
+    let entry: Profile = {
       id: previous?.id ?? randomUUID(),
       name: probe.info.name,
       url: probe.url,
@@ -136,13 +374,14 @@ async function main() {
       token: token.trim(),
       source: 'saved',
     };
-    await remoteRequest(entry, 'GET', '/devices');
+    entry = await pairRemoteClient(entry, probe, `${hostname()} (${process.platform})`);
     profiles.set(entry.id, entry);
     entry.sessionOnly = !(await saveProfiles());
     return publicProfile(entry);
   });
   handle('forget', async (id: string) => {
-    disconnect();
+    for (const [, session] of sessions.entries())
+      if (session.target?.hostId === id) session.disconnect();
     profiles.delete(id);
     if (!(await saveProfiles())) {
       // Forgetting still removes the encrypted on-disk entry when the keychain is locked.
@@ -159,103 +398,149 @@ async function main() {
   handle('request', async (id: string, method: string, pathname: string, body?: unknown) =>
     JSON.parse((await remoteRequest(profile(id), method, pathname, body)).toString()),
   );
-  handle('connect', async (id: string, udid: string, fps: number) => {
-    await disconnect();
-    if (!/^[\da-f-]{36}$/i.test(udid) || ![15, 30, 60].includes(fps))
-      throw new Error('Choose a simulator and frame rate.');
-    const p = profile(id),
-      url = new URL(`/stream/${udid}?fps=${fps}`, p.url);
-    url.protocol = 'wss:';
-    const socket = new WebSocket(url, {
-      ...tlsOptions(p),
-      headers: { Authorization: `Bearer ${p.token}` },
-      handshakeTimeout: 10000,
-      maxPayload: 16 * 1024 * 1024,
-      perMessageDeflate: false,
-    });
-    stream = socket;
-    const media = new ClientMedia(socket, p, (channel, value) => {
-      if (!window.isDestroyed()) window.webContents.send(channel, value);
-    });
-    clientMedia = media;
-    await new Promise<void>((resolve, reject) => {
-      socket.once('open', resolve);
-      socket.once('error', reject);
-      socket.on('message', (data, binary) => {
-        if (stream !== socket || window.isDestroyed()) return;
-        if (media.message(data as Buffer, binary)) return;
-        if (binary) media.video(data as Buffer);
-        else {
-          try {
-            window.webContents.send('notice', JSON.parse(data.toString()));
-          } catch {
-            socket.close();
-          }
-        }
-      });
-      socket.on('error', (error) => {
-        if (stream === socket && !window.isDestroyed())
-          window.webContents.send('notice', { type: 'error', message: error.message });
-      });
-      socket.once('close', () => {
-        void media.close();
-        if (stream === socket) {
-          stream = undefined;
-          clientMedia = undefined;
-          if (!window.isDestroyed()) window.webContents.send('notice', { type: 'closed' });
-        }
-      });
-    });
-  });
-  handle('disconnect', disconnect);
-  const mediaForWindow = () => {
-    if (!clientMedia) throw new Error('Connect to a simulator first.');
-    return clientMedia;
+  handle(
+    'connect',
+    async (owner: BrowserWindow, id: string, udid: string, fps: number) => {
+      validateDisplay(udid, fps);
+      const existing = sessions.ownerOf(id, udid);
+      if (existing !== undefined && existing !== owner.id) {
+        windows.get(existing)?.show();
+        windows.get(existing)?.focus();
+        throw new Error('This simulator is already open in another display. Use that window.');
+      }
+      const session = sessionFor(owner);
+      await session.connect({ hostId: id, udid, fps });
+      mediaBySession.get(session)?.reannounce();
+    },
+    true,
+  );
+  handle('disconnect', disconnect, true);
+  const mediaForWindow = (owner: BrowserWindow) => {
+    const session = sessions.get(owner.id);
+    const media = session && mediaBySession.get(session);
+    if (!media || !session?.active) throw new Error('Connect to a simulator first.');
+    return media;
   };
-  handle('media-quality', (limits: QualityLimits) => mediaForWindow().quality(limits));
-  handle('media-command', async (action: MediaAction, consent?: boolean) => {
-    if (
-      ![
-        'recording-start',
-        'recording-stop',
-        'recording-discard',
-        'audio-start',
-        'audio-stop',
-      ].includes(action)
-    )
+  handle('media-quality', (owner: BrowserWindow, limits: QualityLimits) =>
+    mediaForWindow(owner).quality(limits), true);
+  handle('media-command', async (owner: BrowserWindow, action: MediaAction, consent?: boolean) => {
+    if (!['recording-start', 'recording-stop', 'recording-discard', 'audio-start', 'audio-stop'].includes(action))
       throw new Error('Unknown media action.');
-    await mediaForWindow().command(action, consent === true);
-  });
-  handle('save-recording', () =>
-    mediaForWindow().save(async () => {
-      const result = await dialog.showSaveDialog(window, {
+    await mediaForWindow(owner).command(action, consent === true);
+  }, true);
+  handle('save-recording', (owner: BrowserWindow) =>
+    mediaForWindow(owner).save(async () => {
+      const result = await dialog.showSaveDialog(owner, {
         defaultPath: `Simulator-${new Date().toISOString().replace(/[:.]/g, '-')}.mp4`,
         filters: [{ name: 'MP4 video (silent)', extensions: ['mp4'] }],
       });
       return result.canceled ? undefined : result.filePath;
-    }),
-  );
+    }), true);
   for (const channel of ['video-consumed', 'audio-consumed', 'video-feedback']) {
     ipcMain.on(channel, (event, value) => {
-      if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame)
-        return;
-      if (channel === 'video-consumed') clientMedia?.consumed();
-      else if (channel === 'audio-consumed') clientMedia?.consumedAudio();
-      else {
-        try {
-          clientMedia?.feedback(value);
-        } catch {
-          /* Ignore stale renderer feedback. */
-        }
-      }
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      if (!owner || !windows.has(owner.id) || event.senderFrame !== owner.webContents.mainFrame) return;
+      const session = sessions.get(owner.id);
+      const media = session && mediaBySession.get(session);
+      if (channel === 'video-consumed') media?.consumed();
+      else if (channel === 'audio-consumed') media?.consumedAudio();
+      else { try { media?.feedback(value); } catch { /* Ignore stale feedback. */ } }
     });
   }
 
+  handle(
+    'retry',
+    (owner: BrowserWindow) => {
+      const session = sessionFor(owner),
+        target = session.target;
+      if (target) {
+        const existing = sessions.ownerOf(target.hostId, target.udid);
+        if (existing !== undefined && existing !== owner.id)
+          throw new Error('This simulator is already open in another display. Use that window.');
+      }
+      return session.retry();
+    },
+    true,
+  );
+  handle(
+    'display-context',
+    (owner: BrowserWindow) => {
+      if (displays.has(owner.id)) return displays.get(owner.id);
+      if (owner === window) {
+        const context = workspaceContext;
+        workspaceContext = undefined;
+        return context;
+      }
+    },
+    true,
+  );
+  handle(
+    'pop-out',
+    async (owner: BrowserWindow, id: string, udid: string, fps: number) => {
+      validateDisplay(udid, fps);
+      const existing = sessions.ownerOf(id, udid);
+      if (existing !== undefined && existing !== owner.id) {
+        windows.get(existing)?.show();
+        windows.get(existing)?.focus();
+        return;
+      }
+      const selection = selectionFor(sessions.get(owner.id));
+      let device =
+        selection?.host.id === id && selection.device.udid === udid ? selection.device : undefined;
+      if (!device) {
+        const inventory = JSON.parse(
+          (await remoteRequest(profile(id), 'GET', '/devices')).toString(),
+        ) as Inventory;
+        device = inventory.devices.find((d) => d.udid === udid);
+      }
+      if (!device) throw new Error('This simulator no longer exists. Refresh the list.');
+      await detach(owner, { host: publicProfile(profile(id)), device, fps });
+    },
+    true,
+  );
+  handle(
+    'return-display',
+    async (owner: BrowserWindow) => {
+      const context = displays.get(owner.id);
+      if (!context) return;
+      const reopenWorkspace = window.isDestroyed();
+      if (reopenWorkspace) window = createWindow();
+      const workspaceSession = sessions.get(window.id);
+      const previous = workspaceSession?.active ? workspaceSession.target : undefined;
+      if (previous) await detach(window, selectionFor(workspaceSession)!);
+      sessions.delete(window.id);
+      const session = sessions.get(owner.id);
+      context.sessionActive = !!session?.active;
+      if (session) {
+        session.release();
+        sessions.move(owner.id, window.id);
+        mediaBySession.get(session)?.reparent();
+        context.fps = session.target?.fps ?? context.fps;
+      }
+      if (reopenWorkspace) {
+        workspaceContext = context;
+        await loadWindow(window);
+      } else window.webContents.send('return-display', context);
+      window.show();
+      window.focus();
+      owner.close();
+    },
+    true,
+  );
+  handle(
+    'window-action',
+    (owner: BrowserWindow, action: string) => {
+      if (action === 'maximize') owner.isMaximized() ? owner.unmaximize() : owner.maximize();
+      if (action === 'fullscreen') owner.setFullScreen(!owner.isFullScreen());
+    },
+    true,
+  );
   ipcMain.on('input', (event, input) => {
-    if (event.sender === window.webContents && stream?.readyState === WebSocket.OPEN) {
-      const parsed = inputSchema.safeParse(input);
-      if (parsed.success) stream.send(JSON.stringify(parsed.data));
-    }
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || !windows.has(owner.id) || event.senderFrame !== owner.webContents.mainFrame)
+      return;
+    const parsed = inputSchema.safeParse(input);
+    if (parsed.success) sessions.get(owner.id)?.input(parsed.data);
   });
   handle('host-status', (): HostStatus => sharing?.status ?? { running: false });
   handle('start-host', async () => {
@@ -266,54 +551,42 @@ async function main() {
     await sharing?.close();
     sharing = undefined;
   });
-  handle('save-screenshot', async (id: string, udid: string) => {
-    if (!/^[\da-f-]{36}$/i.test(udid)) throw new Error('Choose a simulator.');
-    const result = await dialog.showSaveDialog(window, {
-      defaultPath: `Simulator-${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
-      filters: [{ name: 'PNG image', extensions: ['png'] }],
-    });
-    if (result.canceled || !result.filePath) return false;
-    await writeFile(
-      result.filePath,
-      await remoteRequest(profile(id), 'GET', `/devices/${udid}/screenshot`),
-    );
-    return true;
-  });
-  handle('install-app', async (id: string, udid: string) => {
-    if (!/^[\da-f-]{36}$/i.test(udid)) throw new Error('Choose a simulator.');
-    const result = await dialog.showOpenDialog(window, {
-      title: 'Install a simulator app',
-      properties: ['openFile'],
-      filters: [{ name: 'Zipped simulator app (.app.zip)', extensions: ['zip'] }],
-    });
-    if (result.canceled || !result.filePaths[0]) return false;
-    const file = result.filePaths[0];
-    if ((await stat(file)).size > 128 * 1024 * 1024)
-      throw new Error('Choose an app archive smaller than 128 MB.');
-    await remoteRequest(profile(id), 'POST', `/devices/${udid}/install`, await readFile(file));
-    return true;
-  });
-  window = new BrowserWindow({
-    width: 1440,
-    height: 960,
-    minWidth: 980,
-    minHeight: 680,
-    title: 'Sim Relay',
-    icon: path.join(__dirname, '../assets/app-icon.png'),
-    backgroundColor: '#101214',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
+  handle(
+    'save-screenshot',
+    async (owner: BrowserWindow, id: string, udid: string) => {
+      if (!/^[\da-f-]{36}$/i.test(udid)) throw new Error('Choose a simulator.');
+      const result = await dialog.showSaveDialog(owner, {
+        defaultPath: `Simulator-${new Date().toISOString().replace(/[:.]/g, '-')}.png`,
+        filters: [{ name: 'PNG image', extensions: ['png'] }],
+      });
+      if (result.canceled || !result.filePath) return false;
+      await writeFile(
+        result.filePath,
+        await remoteRequest(profile(id), 'GET', `/devices/${udid}/screenshot`),
+      );
+      return true;
     },
-  });
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', (event) => event.preventDefault());
-  window.webContents.on('will-attach-webview', (event) => event.preventDefault());
-  window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
-    callback(false),
+    true,
   );
+  handle(
+    'install-app',
+    async (owner: BrowserWindow, id: string, udid: string) => {
+      if (!/^[\da-f-]{36}$/i.test(udid)) throw new Error('Choose a simulator.');
+      const result = await dialog.showOpenDialog(owner, {
+        title: 'Install a simulator app',
+        properties: ['openFile'],
+        filters: [{ name: 'Zipped simulator app (.app.zip)', extensions: ['zip'] }],
+      });
+      if (result.canceled || !result.filePaths[0]) return false;
+      const file = result.filePaths[0];
+      if ((await stat(file)).size > 128 * 1024 * 1024)
+        throw new Error('Choose an app archive smaller than 128 MB.');
+      await remoteRequest(profile(id), 'POST', `/devices/${udid}/install`, await readFile(file));
+      return true;
+    },
+    true,
+  );
+  window = createWindow();
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
@@ -351,8 +624,7 @@ async function main() {
       },
     ]),
   );
-  if (process.env.SIM_RELAY_DEV === '1') await window.loadURL('http://127.0.0.1:5173');
-  else await window.loadFile(path.join(__dirname, '../dist/index.html'));
+  await loadWindow(window);
 }
 app
   .whenReady()
@@ -367,7 +639,12 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  const cleanup = disconnect();
+  const cleanups: Promise<unknown>[] = [];
+  for (const [, session] of sessions.entries()) {
+    session.disconnect();
+    cleanups.push(mediaBySession.get(session)?.close() ?? Promise.resolve());
+  }
   discovery?.destroy();
-  void Promise.allSettled([cleanup, sharing?.close()]).finally(() => app.quit());
+  cleanups.push(sharing?.close() ?? Promise.resolve());
+  void Promise.allSettled(cleanups).finally(() => app.quit());
 });

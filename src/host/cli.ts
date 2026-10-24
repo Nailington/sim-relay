@@ -4,6 +4,8 @@ import { writeFile, rename, rm } from 'node:fs/promises';
 import { startHost } from './server';
 import { backgroundCommand, serviceStatusFile, printHostStatus } from './service';
 import packageMetadata from '../../package.json';
+import { clientAdminRequest } from './client-admin';
+import type { AuthorizedClient } from './clients';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -18,6 +20,9 @@ Commands:
   restart              Restart the background host, keeping its saved settings
   status               Show background host status and pairing details
   logs                 Show the last 50 lines of background host output
+  clients              List authorized clients and active displays
+  revoke CLIENT_ID     Revoke one client and disconnect its displays
+  pairing              Show the current single-use pairing code
   serve                Run in this Terminal (the default); Ctrl+C stops sharing
   --help, -h           Show this help
   --version, -v        Show the installed version
@@ -39,6 +44,34 @@ Only run one host at a time. Stop sharing in the desktop app before starting her
     console.log(packageMetadata.version);
     return;
   }
+  const directory = path.resolve(
+    process.env.SIM_RELAY_STATE_DIR ?? path.join(homedir(), '.sim-relay'),
+  );
+  if (args[0] === 'revoke' && args.length === 2) {
+    await clientAdminRequest(directory, { action: 'revoke', id: args[1] });
+    console.log('Client access revoked. Its active displays have been disconnected.');
+    return;
+  }
+  if (args[0] === 'clients' && args.length === 1) {
+    const clients = (await clientAdminRequest(directory, { action: 'list' })) as AuthorizedClient[];
+    if (!clients.length)
+      console.log('No authorized clients. Pair a client using the current code.');
+    for (const client of clients)
+      console.log(
+        `${client.id}  ${client.name}\n  Paired: ${client.createdAt}\n  Last seen this host run: ${client.lastSeenAt ?? 'not connected'}\n  Active displays: ${client.activeSessions}`,
+      );
+    return;
+  }
+  if (args[0] === 'pairing' && args.length === 1) {
+    const value = (await clientAdminRequest(directory, { action: 'pairing' })) as {
+      token: string;
+      fingerprint: string;
+    };
+    console.log(
+      `Pairing code: ${value.token}\nSHA-256 fingerprint: ${value.fingerprint}\nThe code changes after each pairing. Share it only with the next client you want to authorize.`,
+    );
+    return;
+  }
   if (args.length > 1) throw new Error('Run sim-relay-host --help for usage.');
   const command = args[0] ?? 'serve';
   if (await backgroundCommand(command)) return;
@@ -46,9 +79,6 @@ Only run one host at a time. Stop sharing in the desktop app before starting her
   const port = Number(process.env.SIM_RELAY_PORT ?? 49300);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error('SIM_RELAY_PORT must be between 1 and 65535.');
-  const directory = path.resolve(
-    process.env.SIM_RELAY_STATE_DIR ?? path.join(homedir(), '.sim-relay'),
-  );
   const host = await startHost({
     directory,
     port,

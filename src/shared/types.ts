@@ -36,6 +36,7 @@ export interface HostInfo {
   platform: string;
   version: string;
   protocolVersion?: number;
+  clientAuthorization?: boolean;
   companion: boolean;
   xcode: boolean;
 }
@@ -48,6 +49,14 @@ export interface Probe {
 export interface Profile extends HostEntry {
   certificate: string;
   token: string;
+}
+export type Orientation =
+  'PORTRAIT' | 'PORTRAIT_UPSIDE_DOWN' | 'LANDSCAPE_LEFT' | 'LANDSCAPE_RIGHT';
+export interface DisplayContext {
+  host: HostEntry;
+  device: Simulator;
+  fps: number;
+  sessionActive?: boolean;
 }
 export type Point = { x: number; y: number };
 export type InputEvent =
@@ -72,15 +81,25 @@ export type InputEvent =
       type: 'rotate';
       orientation: 'PORTRAIT' | 'PORTRAIT_UPSIDE_DOWN' | 'LANDSCAPE_LEFT' | 'LANDSCAPE_RIGHT';
     }
-  | { type: 'shake' };
+  | { type: 'shake' }
+  | { type: 'release' };
 export interface StreamMeta {
+  /** Rotation of the raw surface clockwise, in degrees. Input maps back to surface coordinates. */
+  rotation?: 0 | 90 | 180 | 270;
+  orientation?: Orientation;
+  orientationSource?: 'host' | 'requested' | 'unavailable';
   width: number;
   height: number;
   widthPoints: number;
   heightPoints: number;
 }
 export interface StreamNotice {
-  type: 'metadata' | 'error' | 'closed';
+  type: 'metadata' | 'error' | 'closed' | 'status';
+  state?: 'connecting' | 'live' | 'retrying' | 'off' | 'failed';
+  attempt?: number;
+  retryInMs?: number;
+  terminal?: boolean;
+  code?: string;
   metadata?: StreamMeta;
   message?: string;
 }
@@ -93,6 +112,8 @@ export interface HostStatus {
   addresses?: string[];
 }
 export interface DesktopApi {
+  diagnostics?(hostId?: string): Promise<import('./diagnostics').DiagnosticReport>;
+  exportDiagnostics?(report: import('./diagnostics').DiagnosticReport): Promise<boolean>;
   copyText(text: string): Promise<void>;
   hosts(): Promise<HostEntry[]>;
   probe(url: string): Promise<Probe>;
@@ -101,6 +122,12 @@ export interface DesktopApi {
   request<T>(id: string, method: string, path: string, body?: unknown): Promise<T>;
   connect(id: string, udid: string, fps: number): Promise<void>;
   disconnect(): Promise<void>;
+  retry(): Promise<void>;
+  popOut(id: string, udid: string, fps: number): Promise<void>;
+  displayContext(): Promise<DisplayContext | undefined>;
+  returnDisplay(): Promise<void>;
+  onReturnDisplay(callback: (context: DisplayContext) => void): () => void;
+  windowAction(action: 'maximize' | 'fullscreen'): Promise<void>;
   input(event: InputEvent): void;
   onFrame(callback: (frame: Uint8Array) => void | Promise<void>): () => void;
   onNotice(callback: (notice: StreamNotice) => void): () => void;

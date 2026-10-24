@@ -6,10 +6,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
-import type { Inventory, StreamMeta, InputEvent } from '../shared/types';
+import type { Inventory, StreamMeta, InputEvent, Orientation } from '../shared/types';
 import { hidEvents, JpegFramer, jpegDimensions } from './protocol';
 import { HidDispatcher } from './hid';
 import type { VideoSettings } from '../shared/media';
+import { displayRotation } from '../shared/display';
 
 export const exec = promisify(execFile);
 export const protoPath = () => {
@@ -24,6 +25,11 @@ export const protoPath = () => {
 };
 // Dynamic gRPC methods are defined by the vendored, wire-compatible protocol.
 export interface CompanionClient extends grpc.Client {
+  getOrientation(
+    request: object,
+    options: grpc.CallOptions,
+    cb: (error: grpc.ServiceError | null, result: { orientation: string }) => void,
+  ): void;
   describe(
     request: object,
     options: grpc.CallOptions,
@@ -31,6 +37,7 @@ export interface CompanionClient extends grpc.Client {
       error: grpc.ServiceError | null,
       result: {
         targetDescription: {
+          displays?: { active: boolean; width: string; height: string }[];
           screenDimensions: {
             width: string;
             height: string;
@@ -116,6 +123,9 @@ export class SimulatorSession {
   private directory = '';
   private closed = false;
   private closing?: Promise<void>;
+  private orientationTimer?: ReturnType<typeof setInterval>;
+  private nativeOrientedFrames = false;
+  private requestedOrientation: Orientation = 'PORTRAIT';
   private activeTouch?: { x: number; y: number };
   private keys = new Set<number>();
   private videoSettings: VideoSettings = { fps: 30, scale: 1, quality: 0.7 };
@@ -186,6 +196,7 @@ export class SimulatorSession {
       session.metadata = await new Promise<StreamMeta>((resolve, reject) =>
         session.client!.describe({}, { deadline: Date.now() + 15000 }, (error, data) => {
           if (error) return reject(error);
+          session.nativeOrientedFrames = !!data.targetDescription.displays?.length;
           const d = data.targetDescription.screenDimensions;
           const width = Number(d.width),
             height = Number(d.height);
@@ -194,11 +205,37 @@ export class SimulatorSession {
           resolve({
             width,
             height,
+            rotation: 0,
+            orientationSource: 'unavailable',
             widthPoints: Number(d.widthPoints) || width / (d.density || 1),
             heightPoints: Number(d.heightPoints) || height / (d.density || 1),
           });
         }),
       );
+      let polling = false;
+      const pollOrientation = () => {
+        if (polling || session.closed) return;
+        polling = true;
+        session.client!.getOrientation({}, { deadline: Date.now() + 2000 }, (error, result) => {
+          polling = false;
+          if (session.closed) return;
+          if (error) {
+            if (error.code === grpc.status.UNIMPLEMENTED && session.orientationTimer)
+              clearInterval(session.orientationTimer);
+            return;
+          }
+          if (
+            ['PORTRAIT', 'PORTRAIT_UPSIDE_DOWN', 'LANDSCAPE_LEFT', 'LANDSCAPE_RIGHT'].includes(
+              result.orientation,
+            )
+          ) {
+            session.requestedOrientation = result.orientation as Orientation;
+            session.updateOrientation('host');
+          }
+        });
+      };
+      session.orientationTimer = setInterval(pollOrientation, 500);
+      pollOrientation();
       session.hid = new HidDispatcher(
         (done) => session.client!.hid(done),
         (error) => {
@@ -242,6 +279,8 @@ export class SimulatorSession {
           if (dimensions && this.pointSize) {
             // Encoded pixels may be scaled. Input coordinates always use native points.
             const landscape = dimensions.width > dimensions.height;
+            if (dimensions.width !== this.metadata.width || dimensions.height !== this.metadata.height)
+              this.release();
             this.metadata = {
               ...this.metadata,
               ...dimensions,
@@ -249,6 +288,7 @@ export class SimulatorSession {
               heightPoints: landscape ? this.pointSize.short : this.pointSize.long,
             };
           }
+          this.updateOrientation(this.metadata.orientationSource);
           this.frame?.(jpeg);
         }
       } catch (e) {
@@ -271,8 +311,29 @@ export class SimulatorSession {
       },
     });
   }
+  private updateOrientation(source = this.metadata.orientationSource) {
+    const orientation = this.requestedOrientation;
+    // Recent companions compose video in interface orientation. Legacy companions
+    // expose the portrait IOSurface; compensate only for that path.
+    const rotation = displayRotation(orientation, source, this.nativeOrientedFrames);
+    if (rotation !== this.metadata.rotation) this.release();
+    this.metadata = { ...this.metadata, orientation, rotation, orientationSource: source };
+  }
+  private release() {
+    if (this.activeTouch) this.input({ type: 'touch', phase: 'up', point: this.activeTouch });
+    for (const code of this.keys) this.input({ type: 'key', code, phase: 'up' });
+  }
   input(event: InputEvent) {
     if (this.closed) return;
+    if (event.type === 'release') {
+      this.release();
+      return;
+    }
+    if (event.type === 'rotate') {
+      this.release();
+      this.requestedOrientation = event.orientation;
+      this.updateOrientation('requested');
+    }
     if (event.type === 'touch') this.activeTouch = event.phase === 'up' ? undefined : event.point;
     if (event.type === 'key')
       event.phase === 'down' ? this.keys.add(event.code) : this.keys.delete(event.code);
@@ -283,9 +344,9 @@ export class SimulatorSession {
   }
   private async finishClose() {
     if (this.closed) return;
-    if (this.activeTouch) this.input({ type: 'touch', phase: 'up', point: this.activeTouch });
-    for (const code of this.keys) this.input({ type: 'key', code, phase: 'up' });
+    this.release();
     this.closed = true;
+    if (this.orientationTimer) clearInterval(this.orientationTimer);
     this.video?.cancel();
     // Complete the final gesture and drain releases before stopping the owned process.
     await Promise.race([this.hid?.drain(), new Promise((resolve) => setTimeout(resolve, 1000))]);

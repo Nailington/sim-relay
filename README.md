@@ -115,7 +115,7 @@ requires compatible macOS and Xcode versions; older Intel/Xcode combinations are
 The host searches `/opt/homebrew/bin`, `/usr/local/bin`, and `PATH`. Set `IDB_COMPANION_PATH` for
 a custom installation.
 
-In the desktop app on the Mac, select **Set up a Mac host → Start sharing**. Alternatively,
+In the desktop app on the Mac, select **Share this Mac → Start sharing**. Alternatively,
 start the bundled command from Terminal:
 
 ```sh
@@ -162,6 +162,14 @@ ssh -N -L 49300:127.0.0.1:49300 user@your-mac
 Connect to `https://127.0.0.1:49300` using the same Mac fingerprint and token. Loopback-only
 hosts are not advertised through Bonjour.
 
+## Workspace and diagnostics
+
+Choose a Mac and simulator in the left rail, then select **Start & connect**. The display
+uses the remaining window height; hide its controls or expand the display from the toolbar.
+**Diagnostics** checks connection stages and host setup, including when the Mac is unreachable.
+Review the redacted report before saving it locally. See the [workspace and diagnostics guide](docs/workspace-and-diagnostics.md)
+for the cleanup inventory, report contents, and validation limits.
+
 ## Controls
 
 - Click, double-click, drag, and click-and-hold send native touch input. Coordinates map to
@@ -183,7 +191,7 @@ hosts are not advertised through Bonjour.
   `ditto -c -k --keepParent MyApp.app MyApp.app.zip`. Limits: 128 MB compressed, 512 MB expanded,
   20,000 files. Archive symlinks become regular files. Install bundles that require symlinks
   directly from the Mac filesystem using the command panel.
-- **Command panel** (Ctrl+K / Cmd+K) runs `simctl` arguments directly, without a shell.
+- **Command** (Ctrl+K / Cmd+K) runs `simctl` arguments directly, without a shell.
   `$DEVICE` means the selected simulator. Launch/uninstall apps, send notifications, change
   permissions, import media, or use other finite `simctl` operations. Paths refer to the Mac.
   Erase/delete commands require a checkbox. Commands time out after two minutes.
@@ -210,17 +218,29 @@ clients. Disconnecting leaves the simulator running; **Shut down simulator** pow
 
 ## Security and storage
 
-The host uses TLS, a persistent certificate, and a random 192-bit bearer token. Pairing verifies
-the fingerprint before sending the token. Subsequent HTTPS/WebSocket traffic validates the
+The host uses TLS, a persistent certificate, and a random single-use pairing code. Pairing verifies
+the fingerprint before exchanging the code for a separate random 256-bit client credential.
+The code changes after every successful pairing. The host stores only credential hashes;
+the desktop client protects its credential with the OS credential store when available.
+Subsequent HTTPS/WebSocket traffic validates the
 pinned certificate. The companion uses a private Unix socket, not an exposed gRPC port.
 Browser origins are rejected. The renderer has no Node integration or unrestricted IPC.
+
+Manage access locally on the Mac with `sim-relay-host clients`,
+`sim-relay-host revoke CLIENT_ID`, and `sim-relay-host pairing` (or `npm run host -- clients`
+when running from source). Revoking a client closes its active displays and prevents reuse of
+its credential; other clients stay connected. Use the same `SIM_RELAY_STATE_DIR` as the host.
+See [client authorization](docs/client-authorization.md) for migration, desktop-host paths,
+and the local administrator interface.
 
 HTTPS works with local and Tailscale IP addresses: each Mac generates its own self-signed
 certificate, so it does not need a public domain or a certificate authority. A browser may
 warn about that certificate; Sim Relay pairs by comparing its fingerprint on both devices.
 Connection compatibility uses an API protocol version independently of the app release
-number. Updated clients also recognize hosts from releases `0.1.0` through `0.1.3`, which
-advertised only an app version.
+number. New hosts use protocol 2 for individual client authorization. Updated clients can
+also connect to protocol 1 hosts, including releases `0.1.0` through `0.1.3`, which advertised
+only an app version. Upgrading a host invalidates existing shared-token pairings; update
+clients and pair them again. Protocol 1 hosts retain their original shared-token behavior.
 
 Pairing grants simulator management access as the Mac user, including simulator commands.
 Give the token only to trusted clients. Saved client tokens use operating-system encryption.
@@ -262,3 +282,5 @@ published source and Nix package inputs.
 - `scripts`: development builds, package validation, and release automation.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for protocol licensing.
+
+For independent display windows, automatic recovery, gesture capabilities, and platform validation notes, see [Display sessions](docs/display-sessions.md).

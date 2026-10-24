@@ -113,6 +113,7 @@ export class ClientMedia {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
+  private notices = new Map<string, MediaNotice>();
   private disposed = false;
   private abort = new AbortController();
   private framePending = false;
@@ -127,6 +128,20 @@ export class ClientMedia {
     private profile: Profile,
     private send: (channel: string, value: unknown) => void,
   ) {}
+  /** Drop acknowledgements belonging to the previous renderer without closing capture. */
+  reparent() {
+    this.framePending = this.audioPending = false;
+    this.latest = undefined;
+  }
+  /** Renderer subscriptions are ready; replay capabilities/capture state after a transfer/reload. */
+  reannounce() {
+    this.reparent();
+    for (const notice of this.notices.values()) this.send('media-notice', notice);
+  }
+  private notice(value: MediaNotice) {
+    this.notices.set(value.type, value);
+    this.send('media-notice', value);
+  }
   private write(value: unknown) {
     if (this.disposed || this.socket.readyState !== WebSocket.OPEN)
       throw new Error('Connect to a simulator first.');
@@ -223,7 +238,7 @@ export class ClientMedia {
       return true;
     }
     if (['recording', 'audio', 'metrics', 'media-capabilities'].includes(value.type)) {
-      this.send('media-notice', value);
+      this.notice(value as MediaNotice);
       return true;
     }
     return false;
@@ -252,10 +267,10 @@ export class ClientMedia {
         if (canceled) this.abort.signal.removeEventListener('abort', canceled);
       }
       if (!target || this.disposed) return false;
-      this.send('media-notice', { type: 'recording', recording: { phase: 'saving', bytes: 0 } });
+      this.notice({ type: 'recording', recording: { phase: 'saving', bytes: 0 } });
       try {
         await downloadRecording(this.profile, recording, target, this.abort.signal, (bytes) =>
-          this.send('media-notice', {
+          this.notice({
             type: 'recording',
             recording: {
               phase: 'saving',
@@ -265,7 +280,7 @@ export class ClientMedia {
           }),
         );
       } catch (error) {
-        this.send('media-notice', {
+        this.notice({
           type: 'recording',
           recording: { phase: 'ready', bytes: recording.bytes, message: (error as Error).message },
         });
@@ -292,8 +307,8 @@ export class ClientMedia {
       );
     }
     this.pending.clear();
-    this.send('media-notice', { type: 'audio', active: false });
-    this.send('media-notice', { type: 'recording', recording: { phase: 'idle' } });
+    this.notice({ type: 'audio', active: false });
+    this.notice({ type: 'recording', recording: { phase: 'idle' } });
     return this.saveFinished ?? Promise.resolve();
   }
 }

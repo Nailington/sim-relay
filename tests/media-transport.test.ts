@@ -12,7 +12,7 @@ import { HostMedia } from '../src/host/media';
 import { AudioCoordinator } from '../src/host/audio';
 import { RecordingStore } from '../src/host/recording';
 import { downloadRecording } from '../src/electron/media';
-import { tlsOptions } from '../src/electron/remote';
+import { tlsOptions, pairRemoteClient, probeHost } from '../src/electron/remote';
 import type { Profile } from '../src/shared/types';
 
 const udid = '12345678-1234-4234-8234-123456789abc';
@@ -65,7 +65,7 @@ test(
       }),
     );
     const backend: Backend = {
-      inventory: async () => ({ devices: [], runtimes: [], devicetypes: [] }),
+      inventory: async () => ({ devices: [{ udid, name: 'Test', runtime: '', state: 'Booted' }], runtimes: [], devicetypes: [] }),
       run: async () => '',
       session: async () => ({
         metadata,
@@ -88,7 +88,7 @@ test(
     });
     t.after(() => host.close());
     media.capabilities.audio = true;
-    const profile: Profile = {
+    let profile: Profile = {
       id: 'test',
       name: 'test',
       url: host.status.url!,
@@ -97,6 +97,7 @@ test(
       fingerprint: host.status.fingerprint,
       source: 'saved',
     };
+    profile = await pairRemoteClient(profile, await probeHost(profile.url), 'Media transport test');
     const request = (pathname: string, headers: Record<string, string> = {}) =>
       new Promise<{ status: number; bytes: number }>((resolve, reject) => {
         const req = https.get(

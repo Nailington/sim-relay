@@ -195,7 +195,9 @@ export function MediaControls({
               <button
                 onClick={() =>
                   void run(async () => {
-                    await playback.current?.resume();
+                    playback.current ??= new AudioPlayback();
+                    playback.current.volume(volume, muted);
+                    await playback.current.resume();
                   })
                 }
               >

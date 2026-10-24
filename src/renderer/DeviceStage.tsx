@@ -20,6 +20,7 @@ import {
   Wifi,
 } from 'lucide-react';
 import type { DesktopApi, InputEvent, StreamMeta, Point } from '../shared/types';
+import { displayDimensions, fitDisplay, surfacePoint } from '../shared/display';
 import { keyCode, normalizedPoint } from './input';
 import { subscribeVideo } from './media-playback';
 
@@ -170,9 +171,33 @@ export function DeviceStage({
   onFps(value: number): void;
   onError(message: string): void;
 }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const stage = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState({ width: 500, height: 550 });
+  const canvas = useRef<HTMLCanvasElement>(null),
+    stage = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const [touch, setTouch] = useState<Point>();
+  const contacts = useRef(
+    new globalThis.Map<number, { point: Point; origin: Point; alt: boolean }>(),
+  );
+  const pinch = useRef<{ center: Point; distance: number; scale: number } | undefined>(undefined);
+  const keys = useRef(new Set<number>()),
+    wheelAt = useRef(0),
+    moveAt = useRef(0);
+  const meta = useRef(metadata);
+  meta.current = metadata;
+  const send = (event: InputEvent) => {
+    if (connected && !demo) api?.input(event);
+  };
+  const release = () => {
+    // Send the host an explicit release; it tracks the authoritative held contact/key set.
+    if (connected && !demo) api?.input({ type: 'release' });
+    contacts.current.clear();
+    pinch.current = undefined;
+    keys.current.clear();
+    setTouch(undefined);
+  };
+  const pointAt = (e: { clientX: number; clientY: number; currentTarget: HTMLCanvasElement }) =>
+    normalizedPoint(e.clientX, e.clientY, e.currentTarget.getBoundingClientRect());
+  const source = (point: Point) => surfacePoint(point, meta.current?.rotation);
   useEffect(() => {
     if (!stage.current) return;
     const observer = new ResizeObserver(([entry]) =>
@@ -181,164 +206,167 @@ export function DeviceStage({
     observer.observe(stage.current);
     return () => observer.disconnect();
   }, []);
-  const pointer = useRef<{ id: number; point: Point; origin: Point; pinch: boolean } | undefined>(
-    undefined,
-  );
-  const keys = useRef(new Set<number>());
-  const wheelAt = useRef(0);
-  const moveAt = useRef(0);
-  const [touch, setTouch] = useState<Point>();
-  const send = (event: InputEvent) => {
-    if (connected && !demo) api?.input(event);
-  };
-  const release = () => {
-    if (pointer.current && !pointer.current.pinch)
-      send({ type: 'touch', phase: 'up', point: pointer.current.point });
-    pointer.current = undefined;
-    setTouch(undefined);
-    for (const code of keys.current) send({ type: 'key', phase: 'up', code });
-    keys.current.clear();
-  };
+  useEffect(() => {
+    release();
+  }, [metadata?.rotation, metadata?.width, metadata?.height]);
   useEffect(() => {
     if (demo || !api || !connected) return;
-    const off = subscribeVideo(api, () => canvas.current, onFps, onError);
+    const off = subscribeVideo(api, () => canvas.current, onFps, onError,
+      () => meta.current?.rotation ?? 0);
+    const hidden = () => { if (document.hidden) release(); };
     window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', hidden);
     return () => {
       off();
       release();
       window.removeEventListener('blur', release);
+      document.removeEventListener('visibilitychange', hidden);
     };
   }, [api, connected, demo]);
-  const ratio = metadata ? metadata.width / metadata.height : 402 / 874;
-  const displayHeight = Math.max(100, Math.min(size.height - 75, (size.width - 40) / ratio));
+  useEffect(() => {
+    const el = canvas.current;
+    if (!el || !connected || demo) return;
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      if (contacts.current.size || Date.now() - wheelAt.current < 120) return;
+      wheelAt.current = Date.now();
+      const center = normalizedPoint(event.clientX, event.clientY, el.getBoundingClientRect());
+      if (event.ctrlKey || event.metaKey)
+        send({
+          type: 'pinch',
+          center: source(center),
+          scale: event.deltaY > 0 ? 0.8 : 1.25,
+          duration: 0.12,
+        });
+      else
+        send({
+          type: 'swipe',
+          start: source(center),
+          end: source({
+            x: Math.max(0, Math.min(1, center.x - event.deltaX / 700)),
+            y: Math.max(0, Math.min(1, center.y - event.deltaY / 700)),
+          }),
+          duration: 0.12,
+        });
+    };
+    el.addEventListener('wheel', wheel, { passive: false });
+    return () => el.removeEventListener('wheel', wheel);
+  }, [api, connected, demo]);
+  const display = fitDisplay(size.width, size.height, metadata);
+  const ratio = displayDimensions(metadata).width / displayDimensions(metadata).height;
+  const finishPointer = (id: number, point: Point) => {
+    const current = contacts.current.get(id);
+    if (!current) return;
+    contacts.current.delete(id);
+    if (pinch.current) {
+      send({ type: 'pinch', center: source(pinch.current.center), scale: pinch.current.scale });
+      contacts.current.clear();
+      pinch.current = undefined;
+    } else if (current.alt)
+      send({
+        type: 'pinch',
+        center: source(current.origin),
+        scale: Math.max(0.25, Math.min(4, Math.exp((current.origin.y - point.y) * 3))),
+      });
+    else send({ type: 'touch', phase: 'up', point: source(point) });
+    setTouch(undefined);
+  };
   return (
-    <div ref={stage} className="device-stage">
-      <div className="stage-grid" />
+    <div className="device-stage relay-stage" ref={stage}>
       <div
-        className="phone-wrap"
-        style={{ width: displayHeight * ratio + 10, height: displayHeight + 10 }}
+        className="relay-screen"
+        style={{ width: display.width, height: display.height, aspectRatio: ratio }}
       >
-        <div className="phone-frame" style={{ aspectRatio: ratio }}>
-          {demo ? (
-            <div
-              className="demo-scale"
-              style={{
-                width: 280,
-                height: 280 / ratio,
-                transform: `scale(${(displayHeight * ratio) / 280})`,
-              }}
-            >
-              <DemoPhone homeSignal={homeSignal} />
-            </div>
-          ) : (
-            <canvas
-              ref={canvas}
-              tabIndex={connected ? 0 : -1}
-              aria-label="Remote simulator screen. Click or drag to touch. Use Alt and drag or Control and scroll to pinch. Type while focused to use the keyboard."
-              style={{ aspectRatio: ratio }}
-              onContextMenu={(e) => e.preventDefault()}
-              onPointerDown={(e) => {
-                if (!connected || pointer.current) return;
+        {demo ? (
+          <div
+            className="demo-scale"
+            style={{ width: 280, height: 280 / ratio, transform: `scale(${display.width / 280})` }}
+          >
+            <DemoPhone homeSignal={homeSignal} />
+          </div>
+        ) : (
+          <canvas
+            ref={canvas}
+            tabIndex={connected ? 0 : -1}
+            aria-label="Remote simulator screen. Drag to swipe; hold to long press. Alt and drag or Control and scroll to pinch. Two touch contacts perform a pinch when lifted; independent multi-touch and twist are unavailable. Type while focused to use the keyboard."
+            onContextMenu={(e) => e.preventDefault()}
+            onPointerDown={(e) => {
+              if (
+                !connected ||
+                contacts.current.size >= 2 ||
+                (e.pointerType === 'mouse' && e.button !== 0)
+              )
+                return;
+              e.preventDefault();
+              e.currentTarget.focus();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              const point = pointAt(e);
+              contacts.current.set(e.pointerId, { point, origin: point, alt: e.altKey });
+              setTouch(point);
+              if (contacts.current.size === 2) {
+                send({ type: 'release' });
+                const [a, b] = [...contacts.current.values()].map((c) => c.point);
+                pinch.current = {
+                  center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+                  distance: Math.max(0.001, Math.hypot(a.x - b.x, (a.y - b.y) / ratio)),
+                  scale: 1,
+                };
+              } else if (!e.altKey) send({ type: 'touch', phase: 'down', point: source(point) });
+            }}
+            onPointerMove={(e) => {
+              const current = contacts.current.get(e.pointerId);
+              if (!current) return;
+              const point = pointAt(e);
+              current.point = point;
+              setTouch(point);
+              if (pinch.current) {
+                const [a, b] = [...contacts.current.values()].map((c) => c.point);
+                if (a && b)
+                  pinch.current.scale = Math.max(
+                    0.25,
+                    Math.min(
+                      4,
+                      Math.hypot(a.x - b.x, (a.y - b.y) / ratio) / pinch.current.distance,
+                    ),
+                  );
+              } else if (!current.alt && e.timeStamp - moveAt.current >= 16) {
+                moveAt.current = e.timeStamp;
+                send({ type: 'touch', phase: 'move', point: source(point) });
+              }
+            }}
+            onPointerUp={(e) => finishPointer(e.pointerId, pointAt(e))}
+            onPointerCancel={release}
+            onLostPointerCapture={(e) => {
+              if (contacts.current.has(e.pointerId)) release();
+            }}
+            onBlur={release}
+            onKeyDown={(e) => {
+              if (!connected) return;
+              const code = keyCode(e.code);
+              if (code !== undefined) {
                 e.preventDefault();
-                e.currentTarget.focus();
-                e.currentTarget.setPointerCapture(e.pointerId);
-                const point = normalizedPoint(
-                  e.clientX,
-                  e.clientY,
-                  e.currentTarget.getBoundingClientRect(),
-                );
-                pointer.current = { id: e.pointerId, point, origin: point, pinch: e.altKey };
-                setTouch(point);
-                if (!e.altKey) send({ type: 'touch', phase: 'down', point });
-              }}
-              onPointerMove={(e) => {
-                if (!pointer.current || pointer.current.id !== e.pointerId) return;
-                const point = normalizedPoint(
-                  e.clientX,
-                  e.clientY,
-                  e.currentTarget.getBoundingClientRect(),
-                );
-                pointer.current.point = point;
-                setTouch(point);
-                if (!pointer.current.pinch && e.timeStamp - moveAt.current >= 16) {
-                  moveAt.current = e.timeStamp;
-                  send({ type: 'touch', phase: 'move', point });
+                if (!keys.current.has(code)) {
+                  keys.current.add(code);
+                  send({ type: 'key', code, phase: 'down' });
                 }
-              }}
-              onPointerUp={(e) => {
-                const current = pointer.current;
-                if (!current || current.id !== e.pointerId) return;
-                const point = normalizedPoint(
-                  e.clientX,
-                  e.clientY,
-                  e.currentTarget.getBoundingClientRect(),
-                );
-                if (current.pinch)
-                  send({
-                    type: 'pinch',
-                    center: current.origin,
-                    scale: Math.max(0.25, Math.min(4, Math.exp((current.origin.y - point.y) * 3))),
-                  });
-                else send({ type: 'touch', phase: 'up', point });
-                pointer.current = undefined;
-                setTouch(undefined);
-              }}
-              onPointerCancel={release}
-              onLostPointerCapture={release}
-              onBlur={release}
-              onKeyDown={(e) => {
-                const code = keyCode(e.code);
-                if (code !== undefined) {
-                  e.preventDefault();
-                  if (!keys.current.has(code)) {
-                    keys.current.add(code);
-                    send({ type: 'key', code, phase: 'down' });
-                  }
-                }
-              }}
-              onKeyUp={(e) => {
-                const code = keyCode(e.code);
-                if (code !== undefined) {
-                  e.preventDefault();
-                  keys.current.delete(code);
-                  send({ type: 'key', code, phase: 'up' });
-                }
-              }}
-              onWheel={(e) => {
-                if (!connected || Date.now() - wheelAt.current < 120) return;
-                wheelAt.current = Date.now();
-                const center = normalizedPoint(
-                  e.clientX,
-                  e.clientY,
-                  e.currentTarget.getBoundingClientRect(),
-                );
-                if (e.ctrlKey || e.metaKey)
-                  send({ type: 'pinch', center, scale: e.deltaY > 0 ? 0.8 : 1.25, duration: 0.12 });
-                else
-                  send({
-                    type: 'swipe',
-                    start: center,
-                    end: {
-                      x: Math.max(0, Math.min(1, center.x - e.deltaX / 700)),
-                      y: Math.max(0, Math.min(1, center.y - e.deltaY / 700)),
-                    },
-                    duration: 0.12,
-                  });
-              }}
-            />
-          )}{' '}
-          {touch && (
-            <span
-              className="touch-indicator"
-              style={{ left: `${touch.x * 100}%`, top: `${touch.y * 100}%` }}
-            />
-          )}
-        </div>
-        <div className="phone-shadow" />
-      </div>
-      <div className="stage-caption">
-        <span className="keycap">drag</span> Swipe <i /> <span className="keycap">alt + drag</span>{' '}
-        Pinch <i /> <span className="keycap">click & hold</span> Long press
+              }
+            }}
+            onKeyUp={(e) => {
+              const code = keyCode(e.code);
+              if (code !== undefined) {
+                e.preventDefault();
+                keys.current.delete(code);
+                send({ type: 'key', code, phase: 'up' });
+              }
+            }}
+          />
+        )}
+        {touch && (
+          <span
+            className="touch-indicator"
+            style={{ left: `${touch.x * 100}%`, top: `${touch.y * 100}%` }}
+          />
+        )}
       </div>
     </div>
   );
