@@ -155,7 +155,14 @@ export async function startHost(options: {
         clientId,
         revoke() {
           revoked = true;
-          if (res.writableEnded || res.destroyed) return;
+          if (res.destroyed) return;
+          if (res.headersSent) {
+            // A download already has its status and length on the wire. Destroying
+            // the response also tears down its file pipeline; a 401 cannot replace it.
+            res.destroy();
+            req.destroy();
+            return;
+          }
           // End the response and body reader even when a peer never finishes its upload.
           res.setHeader('Connection', 'close');
           res.once('finish', () => req.destroy());
@@ -515,22 +522,43 @@ export async function startHost(options: {
           (id) => [...clientStreams.values()].filter((value) => value === id).length,
         );
       await clients.revoke(data.id);
-      for (const request of clientRequests.values()) {
-        if (request.clientId === data.id) request.revoke();
+      for (const [req, request] of clientRequests) {
+        if (request.clientId !== data.id) continue;
+        try {
+          request.revoke();
+        } catch {
+          // One failed response must not skip other requests or controller cleanup.
+          try {
+            req.destroy();
+          } catch {
+            /* Continue closing the other transports. */
+          }
+        }
       }
       const matching = [...clientStreams].filter(([, id]) => id === data.id);
       // Close every transport before starting or awaiting any backend cleanup.
       for (const [ws] of matching) {
-        if (ws.readyState === WebSocket.OPEN)
-          ws.send(
-            JSON.stringify({
-              type: 'error',
-              code: 'authorization_required',
-              message: 'Access was revoked on the Mac. Pair with the Mac again to reconnect.',
-            }),
-          );
-        ws.close(4003, 'Authorization revoked');
-        const timeout = setTimeout(() => ws.terminate(), streamCloseTimeout);
+        const terminate = () => {
+          try {
+            ws.terminate();
+          } catch {
+            /* Backend cleanup must still run if this socket has failed. */
+          }
+        };
+        try {
+          if (ws.readyState === WebSocket.OPEN)
+            ws.send(
+              JSON.stringify({
+                type: 'error',
+                code: 'authorization_required',
+                message: 'Access was revoked on the Mac. Pair with the Mac again to reconnect.',
+              }),
+            );
+          ws.close(4003, 'Authorization revoked');
+        } catch {
+          terminate();
+        }
+        const timeout = setTimeout(terminate, streamCloseTimeout);
         timeout.unref();
         ws.once('close', () => clearTimeout(timeout));
       }
