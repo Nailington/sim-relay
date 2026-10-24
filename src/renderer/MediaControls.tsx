@@ -17,17 +17,22 @@ export function MediaControls({
   maxFps = 30,
   onError,
   onRecordingChange,
+  onAdaptiveChange,
 }: {
   api?: DesktopApi;
   connected: boolean;
   maxFps?: number;
   onError(message: string): void;
   onRecordingChange?(recording: RecordingStatus): void;
+  onAdaptiveChange?(adaptive: boolean): void;
 }) {
   const [capabilities, setCapabilities] = useState<MediaCapabilities>();
+  useEffect(() => {
+    onAdaptiveChange?.(capabilities?.adaptive === true);
+  }, [capabilities?.adaptive, onAdaptiveChange]);
   const [recording, setRecording] = useState<RecordingStatus>({ phase: 'idle' });
   const [metrics, setMetrics] = useState<StreamMetrics>();
-  const [limits, setLimits] = useState(defaultQuality());
+  const [limits, setLimits] = useState(() => defaultQuality(maxFps));
   const [busy, setBusy] = useState(false);
   const [audio, setAudio] = useState(false);
   const [consent, setConsent] = useState(false);
@@ -45,6 +50,7 @@ export function MediaControls({
     const off = api.onMediaNotice((notice) => {
       if (notice.type === 'media-capabilities') setCapabilities(notice.capabilities);
       if (notice.type === 'metrics') setMetrics(notice.metrics);
+      if (notice.type === 'quality-state') setLimits(notice.limits);
       if (notice.type === 'recording') {
         setRecording(notice.recording);
         if (notice.recording.phase === 'error' && notice.recording.message)
@@ -75,17 +81,10 @@ export function MediaControls({
       setCapabilities(undefined);
       setRecording({ phase: 'idle' });
       setMetrics(undefined);
-      setLimits(defaultQuality());
+      setLimits(defaultQuality(maxFps));
       setConsent(false);
     }
-  }, [connected]);
-  useEffect(() => {
-    if (connected && capabilities?.adaptive && api) {
-      const initial = defaultQuality(maxFps);
-      setLimits(initial);
-      void api.setQuality(initial).catch((error: Error) => errorHandler.current(error.message));
-    }
-  }, [api, connected, capabilities?.adaptive, maxFps]);
+  }, [connected, maxFps]);
   useEffect(() => {
     playback.current?.volume(volume, muted);
   }, [volume, muted]);
