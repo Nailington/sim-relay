@@ -228,8 +228,9 @@ export function App() {
   useEffect(() => {
     if (!api) return;
     const restore = (context: DisplayContext) => {
-      selectionGeneration.current++;
-      connectionAttempt.current++;
+      const selection = ++selectionGeneration.current;
+      const attempt = ++connectionAttempt.current;
+      const current = () => selectionGeneration.current === selection && connectionAttempt.current === attempt;
       setDemo(false);
       setHost(context.host);
       currentHost.current = context.host.id;
@@ -242,13 +243,13 @@ export function App() {
       void api
         .request<Inventory>(context.host.id, 'GET', '/devices')
         .then((value) => {
-          if (currentHost.current === context.host.id) setInventory(value);
+          if (current()) setInventory(value);
         })
-        .catch((e) => setError(e.message));
+        .catch((e) => { if (current()) setError(e.message); });
       if (context.sessionActive)
         void api
           .connect(context.host.id, context.device.udid, context.fps)
-          .catch((e) => setError(e.message));
+          .catch((e) => { if (current()) setError(e.message); });
     };
     const off = api.onReturnDisplay(restore);
     void api
