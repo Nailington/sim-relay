@@ -192,6 +192,12 @@ extraResources into `Contents/Resources/host`, outside asar; the packaging sign 
 embedded binaries. The helper embeds its own identifier/usage descriptions. Desktop macOS usage
 descriptions are additive. Signed/notarized builds, TCC attribution, and macOS 13 runtime execution
 still need actual Mac checks; Linux builds intentionally skip Swift compilation.
+The capture lifecycle runs in a private nonisolated async function (explicitly `@concurrent`
+with Swift 6.2+), separate from Swift's implicitly MainActor-isolated async entry point. This
+keeps older SDKs' non-Sendable `SCShareableContent` snapshots local to the capture function;
+only `Void` returns to the entry point. No SDK type receives an unsafe Sendable conformance
+or concurrency-warning suppression. This addresses the Xcode 16.4/macOS 15.5 SDK CI diagnostic;
+compilation of this follow-up is pending the integrated PR's CI, not a new native compile claim.
 Nix builds also skip the helper (`SIM_RELAY_SKIP_NATIVE_AUDIO=1`) because their sandbox cannot
 use the separately installed Xcode SDK. Supply a helper compiled outside that sandbox through
 `SIM_RELAY_AUDIO_HELPER` to enable Mac audio for a Nix installation. Video/recording still work
