@@ -48,8 +48,10 @@ npm run dev
 ```
 
 `npm run dev` opens an Electron window and starts its UI development server. `npm run dev:ui`
-opens only the browser preview, which uses clearly labeled, simulated demo data. Real
-connections run through Electron's isolated native bridge and are unavailable in the browser.
+opens only the UI preview, which uses clearly labeled, simulated demo data. Desktop connections
+use Electron's isolated native bridge. For real browser connections, build the app and run the
+[authenticated web service](docs/browser-hosting.md) with `npm run web`; the UI preview alone
+does not run that relay.
 
 ## Install with Nix
 

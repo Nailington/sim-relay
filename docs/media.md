@@ -180,8 +180,9 @@ Web Audio provides playback on Electron macOS/Windows/Linux; actual output-devic
 native validation on each platform. Playback follows the OS default output. Resume playback
 handles suspended contexts after device/system changes. Mute and the volume slider modify only
 the client's GainNode; they never send simulated VOLUME_UP/DOWN or change the host system volume.
-Stop audio releases capture; mute continues capture at zero client gain. Future browsers can use
-the same PCM decoder after a user gesture, subject to their autoplay/output-device policies.
+Stop audio releases capture; mute continues capture at zero client gain. The authenticated browser
+workspace uses the same PCM decoder after a user gesture, subject to browser autoplay/output-device
+policies. Native audio playback remains unverified as documented below.
 
 ## Packaging and integration contract
 
@@ -197,7 +198,8 @@ with Swift 6.2+), separate from Swift's implicitly MainActor-isolated async entr
 keeps older SDKs' non-Sendable `SCShareableContent` snapshots local to the capture function;
 only `Void` returns to the entry point. No SDK type receives an unsafe Sendable conformance
 or concurrency-warning suppression. This addresses the Xcode 16.4/macOS 15.5 SDK CI diagnostic;
-compilation of this follow-up is pending the integrated PR's CI, not a new native compile claim.
+the integrated PR now passes both arm64 and x64 Mac CI builds. This compilation evidence does
+not validate native audio capture or playback.
 Nix builds also skip the helper (`SIM_RELAY_SKIP_NATIVE_AUDIO=1`) because their sandbox cannot
 use the separately installed Xcode SDK. Supply a helper compiled outside that sandbox through
 `SIM_RELAY_AUDIO_HELPER` to enable Mac audio for a Nix installation. Video/recording still work
@@ -282,7 +284,7 @@ Dynamic Type and Reduce Motion; actual VoiceOver/large-text runtime checks remai
 
 ## Validation still required before closing issues
 
-Combined-stack automation: `npm test` (86 tests), `npm run check`, `npm run build`, and real
+Combined-stack automation: `npm test`, `npm run check`, `npm run build`, and real
 headless Electron main/preload/renderer smoke. The latter verifies two pop-outs, retained recording
 across transfers, sender-window media/quality routing, late capture-state replay, and native dialog
 parenting with picker results stubbed. A delayed-window-loading case returns two pop-outs
