@@ -140,21 +140,26 @@ export class MediaPeer {
   private async control(command: z.infer<typeof action>) {
     if (this.closed) throw new Error('Simulator session closed.');
     switch (command.action) {
-      case 'recording-start':
+      case 'recording-start': {
         if (!this.host.capabilities.recording)
           throw new Error('Screen recording requires a Mac host with Xcode.');
         if (this.recording) throw new Error('Save or discard the previous recording first.');
-        this.recording = this.host.recordings.create(this.udid, (recording) =>
-          this.send({ type: 'recording', recording }),
-        );
+        const recording = this.host.recordings.create(this.udid, (status) => {
+          // Expiry and encoder exit close autonomously. Release ownership only
+          // after cleanup publishes idle, and ignore any obsolete lifecycle notice.
+          if (this.recording !== recording) return;
+          if (status.phase === 'idle') this.recording = undefined;
+          this.send({ type: 'recording', recording: status });
+        });
+        this.recording = recording;
         try {
-          await this.recording.start();
+          await recording.start();
         } catch (error) {
-          await this.recording.close();
-          this.recording = undefined;
+          await recording.close();
           throw error;
         }
         break;
+      }
       case 'recording-stop':
         if (!this.recording) throw new Error('There is no recording to stop.');
         try {
@@ -168,7 +173,6 @@ export class MediaPeer {
         }
       case 'recording-discard':
         await this.recording?.close();
-        this.recording = undefined;
         break;
       case 'audio-start':
         if (!command.hostAudioConsent)
