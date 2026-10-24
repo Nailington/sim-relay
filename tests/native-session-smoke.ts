@@ -11,14 +11,18 @@ import { startHost, type Backend } from '../src/host/server';
 import { remoteRequest, probeHost } from '../src/electron/remote';
 import type { InputEvent, Inventory } from '../src/shared/types';
 const directory = await mkdtemp(path.join(tmpdir(), 'sim-relay-native-'));
-const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-123456789ABC'];
+const ids = [
+  'A1234567-1234-4123-8123-123456789ABC',
+  'B1234567-1234-4123-8123-123456789ABC',
+  'C1234567-1234-4123-8123-123456789ABC',
+];
 const events = new Map(ids.map((id) => [id, [] as InputEvent[]]));
 const inventory: Inventory = {
   runtimes: [],
   devicetypes: [],
   devices: ids.map((udid, i) => ({
     udid,
-    name: `Native ${i ? 'B' : 'A'}`,
+    name: `Native ${String.fromCharCode(65 + i)}`,
     runtime: 'iOS fake',
     state: 'Booted',
   })),
@@ -154,7 +158,7 @@ try {
     ),
     /authorized/,
   );
-  assert.equal(starts, 3, 'moving/returning live sessions must not create extra sockets');
+  assert.equal(starts, 4, 'moving/returning live sessions must not create extra sockets');
   assert.ok(events.get(ids[0])!.some((e) => e.type === 'button' && e.button === 'HOME'));
   assert.ok(events.get(ids[0])!.some((e) => e.type === 'button' && e.button === 'VOLUME_UP'));
   assert.ok(!events.get(ids[0])!.some((e) => e.type === 'button' && e.button === 'LOCK'));
@@ -162,6 +166,12 @@ try {
   assert.equal(captures.get(ids[0])!.starts, 1, 'pop-out/return retain the original recording');
   assert.equal(captures.get(ids[0])!.stops, 1);
   assert.equal(captures.get(ids[1])!.starts, 1, 'B controls are scoped to B');
+  for (let i = 0; i < ids.length; i++) {
+    assert.ok(
+      events.get(ids[i])!.some((event) => event.type === 'key' && event.code === 40 + i),
+      `concurrent returns retain independently controllable ${ids[i][0]}`,
+    );
+  }
   assert.equal(audioStarts, 1);
   assert.equal(audioCloses, 1);
   assert.ok(qualities.get(ids[0])!.includes(10));

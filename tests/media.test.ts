@@ -44,6 +44,17 @@ class FakeSocket extends EventEmitter {
   }
 }
 
+const negotiate = (client: ClientMedia) =>
+  client.message(
+    Buffer.from(
+      JSON.stringify({
+        type: 'media-capabilities',
+        capabilities: { adaptive: true, recording: true, audio: true, audioScope: 'host' },
+      }),
+    ),
+    false,
+  );
+
 test('automatic quality steps down under congestion, recovers slowly, honors caps', () => {
   let now = 0;
   const video = new AdaptiveVideo(60, () => now);
@@ -325,6 +336,7 @@ test('client IPC gate keeps only latest video and one audio packet; reports repl
   client.consumedAudio();
   client.message(audio, true);
   assert.equal(sent.filter((s) => s.channel === 'audio-frame').length, 2);
+  negotiate(client);
   client.feedback({ decoded: 2, dropped: 0, decodeMs: 1, intervalMs: 1000 });
   assert.equal(socket.sent.at(-1).feedback.dropped, 998);
   await client.close();
@@ -332,6 +344,7 @@ test('client IPC gate keeps only latest video and one audio packet; reports repl
 test('client media RPC reports host errors, rejects pending on disconnect, and keeps legacy notices', async () => {
   const socket = new FakeSocket(),
     client = new ClientMedia(socket.socket, {} as Profile, () => {});
+  negotiate(client);
   const command = client.command('recording-start');
   const id = socket.sent.at(-1).id;
   client.message(
@@ -503,6 +516,7 @@ test('recording can finish after the shorter audio shutdown deadline without bei
 test('disconnect releases a save waiting on a native dialog without awaiting user interaction', async () => {
   const socket = new FakeSocket(),
     client = new ClientMedia(socket.socket, {} as Profile, () => {});
+  negotiate(client);
   const saving = client.save(() => new Promise(() => {}));
   const id = socket.sent.at(-1).id;
   client.message(
@@ -518,4 +532,17 @@ test('disconnect releases a save waiting on a native dialog without awaiting use
   await tick();
   await client.close();
   assert.equal(await saving, false);
+});
+
+test('legacy hosts receive no media messages until capabilities are negotiated', async () => {
+  const socket = new FakeSocket();
+  const client = new ClientMedia(socket.socket, {} as Profile, () => {});
+  client.feedback({ decoded: 30, dropped: 0, decodeMs: 2, intervalMs: 1000 });
+  assert.throws(() => client.quality(defaultQuality()), /does not support/);
+  await assert.rejects(client.command('recording-start'), /not advertised/);
+  assert.deepEqual(socket.sent, []);
+  negotiate(client);
+  client.feedback({ decoded: 30, dropped: 0, decodeMs: 2, intervalMs: 1000 });
+  assert.equal(socket.sent.at(-1).type, 'video-feedback');
+  await client.close();
 });
