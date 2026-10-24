@@ -2,9 +2,10 @@
 
 Media uses the existing authenticated, certificate-pinned HTTPS/WSS connection. No raw UDP,
 unauthenticated media port, microphone capture, or host-volume manipulation is introduced.
-The tests use injected capture backends on Linux; **real Xcode/simulator capture and macOS
-permission behavior have not been validated in this environment**. Keep #8, #12, and #13 open
-until the native validation below is completed.
+The automated tests use injected capture backends. Real Apple Silicon simulator video, recording,
+Linux client download, and cleanup have also been verified as described below. **Audio capture
+remains blocked by macOS TCC and was not validated with a representative simulator app.**
+Keep #8, #12, and #13 open until their remaining acceptance checks are completed.
 
 ## Adaptive display (#8)
 
@@ -76,7 +77,7 @@ native/WebCodecs implementation but does not establish hardware acceleration or 
 In the network model, a 100 Mbps/4 ms RTT link delivered 30 FPS in both modes (13.6 ms estimated
 95th-percentile transport queue + one-way delay). At 2 Mbps/80 ms RTT, the old 2 MiB backlog
 policy reached 2,246,062 queued bytes, 2.03 sent FPS and 8,999 ms estimated p95 delivery delay.
-The adaptive policy reached 122,203 queued bytes, 6.85 sent FPS, 1.45 Mbps payload and 355 ms
+The adaptive policy reached 122,203 queued bytes, 7.30 sent FPS, 1.54 Mbps payload and 354 ms
 estimated p95 delay, ending at 8 FPS/40%/JPEG 40%. These are model estimates, including a
 constant RTT assumption and no packet loss/TCP retransmissions; they are not measured
 interaction responsiveness. The raw reproducible output is in [media-benchmark.json](media-benchmark.json).
@@ -95,7 +96,10 @@ and Discard. Start waits for simctl's recording-started diagnostic (15-second ti
 uses SIGINT/pipe EOF so simctl writes its movie index. Finalization checks file size and MP4
 top-level `ftyp`, `mdat`, and `moov` atoms before offering a download. This detects missing or
 truncated indexes, not arbitrary media corruption; native playback validation remains necessary.
-Finalization and transfer have separate progress/error states. Save uses the client's native
+Finalization allows simctl up to 30 seconds to finish (35-second parent deadline; recording
+RPCs allow 65 seconds). Bounded stderr is retained throughout, so encoder/finalization errors
+remain actionable. Audio shutdown retains its separate eight-second bound. Finalization and
+transfer have separate progress/error states. Save uses the client's native
 save dialog and a pinned authenticated HTTPS stream to an adjacent `.partial-UUID` file;
 only a complete transfer atomically replaces the chosen destination. Cancellation/failure removes
 the partial file and keeps the host asset available for another Save attempt while connected.
@@ -213,9 +217,65 @@ without it. The Nix fileset includes the build script so Linux imports do not fa
   remain behind the host's authorization/origin checks. Root authorization changes must retain
   those checks on `/recordings/:id` and terminate revoked controller sockets.
 
+## Native evidence (2026-10-23)
+
+Verified on an arm64 Mac with macOS 15.7.1, Xcode 26.0.1, Node 24.16 and iOS 26.0.1, in a
+private checkout with a dedicated iPhone 17 Pro simulator, isolated state, and loopback port 49319. Existing user devices, projects, installed Sim Relay and macOS security settings were
+not modified. The first Mac production build, strict Swift helper build and all 17 then-current
+unit/transport tests passed. Both arm64 and x86_64 helper binaries compiled; **Intel runtime
+and packaged signing/notarization were not tested**.
+
+Real WSS runs exposed and verified fixes for two issues: resetting the FPS gate to each arrival
+unnecessarily dropped normally jittered frames; the recording supervisor's six-second shutdown
+window was too short for a longer changed-screen recording. Pacing now preserves its clock,
+and recording has its separate 30/35-second finalization bounds and retained diagnostics.
+The Linux suite now has 19 passing tests, including regressions for those behaviors.
+
+The final native pass used the fresh simulator's SpringBoard, controlled swipes, and status-bar
+changes. Full 1206×2622 JPEG delivery was 149 frames in 5.001 seconds (29.79 FPS, 32.62 Mbps
+including the initial token-bucket burst at a 30 Mbps long-run limit). Half resolution at
+604×1312 delivered 75 frames in 5.001 seconds (15.00 FPS, 3.876 Mbps). Native input dimensions
+remained 402×874 points. With a 1 Mbps video budget, capture stepped down to 482×1048 and
+8 FPS requested; steady delivery was about 5–5.5 FPS and 0.94–1.03 Mbps. The 14-second ramp
+averaged 0.651 Mbps. This is real local delivery under the controller's budget, **not an
+externally shaped WAN test or a measured input-to-photon latency test**.
+
+Start → controlled interaction → Stop produced a native silent H.264 MP4 at 1206×2622,
+92 frames, 10.038333 seconds and 351,107 bytes. The production HTTPS download code streamed
+it through pinned TLS and a temporary loopback SSH forward to a Linux x64 client, then FFmpeg
+on both Mac and Linux decoded the whole file without errors. The Linux receipt includes its
+SHA-256 digest. Successful discard and an additional active-recording abrupt disconnect both
+left zero temporary recording directories. The temporary forward and private transfer
+credentials were removed. See [the sanitized native result](media-native-validation.json).
+The OS save dialog, QuickTime/VLC UI, browser downloads and Windows runtime were not exercised.
+
+A first static-source run produced one decodable frame lasting .066667 seconds despite a longer
+capture interval; simctl can depend on display updates and the last frame's timing. The changed
+screen repeat above produced a full-length usable recording. A frozen/static source should not
+be assumed to produce a movie matching elapsed wall time. SpringBoard stayed portrait, so this
+run does not prove a landscape app's recording behavior. The generated test app compiled and
+installed, but fresh-app launch remained stalled even after serializing simulators; no tone-app
+playback or accessibility-runtime success is claimed.
+
+The permission-only audio attempt returned: `The user declined TCCs for application, window,
+display capture`. No PCM was persisted; the helper was released. The user chose to continue
+without audio validation, so no further audio probes were performed. Hearing simulator audio,
+output-device changes, permission grant/revoke behavior, and measured A/V skew remain unresolved.
+
+Repeatable helpers are included: `node scripts/build-media-fixture.mjs /tmp/sim-relay-media-...`
+builds an isolated quiet pulse app without installing it; `scripts/validate-mac-media.ts` requires
+`SIM_RELAY_VALIDATION_UDID` naming a dedicated `Sim Relay Media Validation ...` simulator and
+`SIM_RELAY_VALIDATION_DIR` under `/tmp/sim-relay-media-*`. `SIM_RELAY_VALIDATE_INTERACTION=1`
+requests only owned-device swipes/status-bar changes. Audio stays skipped unless a separately
+approved run explicitly sets `SIM_RELAY_VALIDATE_AUDIO=1` and enables host audio. The optional
+external transfer checkpoint uses mode-0600 private files, never logs credentials, and removes
+them during cleanup. `scripts/validate-media-download.ts` verifies the external pinned-TLS save
+and full decode through the temporary port49329 forward. Fixture UI uses native labeled controls,
+Dynamic Type and Reduce Motion; actual VoiceOver/large-text runtime checks remain unrun.
+
 ## Validation still required before closing issues
 
-Automated here: `npm test` (17 tests), `npm run check`, `npm run build`, and the synthetic benchmark.
+Automated here: `npm test` (19 tests), `npm run check`, `npm run build`, and the synthetic benchmark.
 Coverage includes quality bounds/recovery/decode feedback, split/hostile PCM framing, local audio
 opt-in/single-owner/startup races, recording idempotency/startup cancellation/finalization/discard,
 graceful process EOF/kill escalation, stale video-RPC suppression/native input coordinates, bounded
@@ -223,14 +283,14 @@ video/audio IPC, playback gain/mute/source cleanup, host errors, TLS fingerprint
 rejection, streaming save/retry/abort, and disconnect cleanup. Native captures are injected fixtures;
 the MP4 atom fixtures are not playable media and are not claimed as simulator recordings.
 
-On a Mac with a real simulator, validate Record → interact/rotate → Stop → save → playback in
+Remaining native/UI checks: validate landscape apps and playback in
 QuickTime and VLC; repeat cancel/save retry, window close, shutdown, network drop, revocation,
 host stop and SIGKILL, limits, and multiple simulators. Check no simctl/helper processes survive.
 Validate OS permission denial/grant/revoke, packaged signing and both Mac architectures, a
 representative simulator audio app, default-output changes, reconnect, mute/volume independence,
 and a flash/click sync/latency test on each desktop client OS. Compare readability, actual bandwidth,
 decode drops, and measured input-to-photon delay on fast LAN and a genuinely shaped 2 Mbps/80 ms
-link. Real text readability/responsiveness, playable simulator MP4s, and representative simulator
+link. Real shaped-WAN text readability/responsiveness, remaining recording UI/platform checks, and representative simulator
 audio remain unresolved acceptance evidence; do not close the issues based on the synthetic model.
 
 ## Primary references

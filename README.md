@@ -185,7 +185,8 @@ for the cleanup inventory, report contents, and validation limits.
   statistics, silent host-side H.264 screen recordings saved as MP4 on the client, and optional
   Mac playback audio with client mute/volume. Audio includes every app on the Mac and requires
   local host opt-in plus macOS permission. See [media setup, lifecycle, codec assessment, and
-  validation limits](docs/media.md). New native recording/audio paths still need real Mac validation.
+  validation limits](docs/media.md). Native recording and Linux client transfer were verified on a Mac;
+  audio remains unvalidated because macOS permission was denied.
 - **Install app** transfers a ZIP containing one simulator `.app` from any client OS.
   Build for the simulator, not a physical device. On a Mac, create an archive with
   `ditto -c -k --keepParent MyApp.app MyApp.app.zip`. Limits: 128 MB compressed, 512 MB expanded,
