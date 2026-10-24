@@ -1,4 +1,10 @@
 import https from 'node:https';
+import path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { HostMedia, MediaPeer } from './media';
+import { RecordingStore } from './recording';
+import type { VideoSettings } from '../shared/media';
 import packageMetadata from '../../package.json';
 import { HOST_PROTOCOL_VERSION } from '../shared/host-info';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -23,7 +29,12 @@ export interface Backend {
     frame: (frame: Buffer) => void,
     error: (e: Error) => void,
     signal?: AbortSignal,
-  ): Promise<{ metadata: StreamMeta; input(e: InputEvent): void; close(): Promise<void> }>;
+  ): Promise<{
+    metadata: StreamMeta;
+    input(e: InputEvent): void;
+    close(): Promise<void>;
+    setVideoSettings?(settings: VideoSettings): void;
+  }>;
 }
 const uuid = z.string().uuid();
 const commandSchema = z.object({
@@ -46,6 +57,7 @@ async function body(req: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString() || '{}');
 }
 function json(res: ServerResponse, status: number, value: unknown) {
+  if (res.writableEnded || res.destroyed) return;
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
@@ -53,6 +65,13 @@ function json(res: ServerResponse, status: number, value: unknown) {
   });
   res.end(JSON.stringify(value));
 }
+const authorizationRequired = {
+  error:
+    'This client is no longer authorized. Pair with the Mac again using its current pairing code.',
+  code: 'authorization_required',
+};
+class AuthorizationRequired extends Error {}
+const streamCloseTimeout = 1000;
 export async function startHost(options: {
   directory: string;
   port?: number;
@@ -60,6 +79,7 @@ export async function startHost(options: {
   advertise?: boolean;
   backend?: Backend;
   info?: HostInfo;
+  media?: HostMedia;
 }) {
   if (!options.backend && platform() !== 'darwin')
     throw new Error(
@@ -80,19 +100,34 @@ export async function startHost(options: {
       .then(() => true)
       .catch(() => false),
   };
+  const media =
+    options.media ??
+    new HostMedia(
+      new RecordingStore(path.join(options.directory, 'recordings')),
+      undefined,
+      !options.backend && info.xcode,
+    );
+  await media.initialize();
   info.clientAuthorization = true;
   info.protocolVersion = HOST_PROTOCOL_VERSION;
   const controllers = new Map<string, WebSocket>();
+  const controllerClosers = new Map<string, () => Promise<void>>();
   const clientStreams = new Map<WebSocket, string>();
   const streamClosers = new Set<() => Promise<void>>();
   const socketClosers = new Map<WebSocket, () => Promise<void>>();
+  const clientRequests = new Map<IncomingMessage, { clientId: string; revoke(): void }>();
   const server = https.createServer(
     { cert: credentials.cert, key: credentials.key, minVersion: 'TLSv1.2' },
     async (req, res) => {
       // No browser CORS access or cookie authentication. Desktop clients supply a bearer token.
       if (req.headers.origin)
         return json(res, 403, { error: 'Use the Sim Relay desktop app to connect.' });
-      const pathname = new URL(req.url ?? '/', 'https://localhost').pathname;
+      let pathname: string;
+      try {
+        pathname = new URL(req.url ?? '/', 'https://localhost').pathname;
+      } catch {
+        return json(res, 400, { error: 'Invalid request URL.' });
+      }
       if (pathname === '/info' && req.method === 'GET') return json(res, 200, info);
       if (pathname === '/pair' && req.method === 'POST') {
         try {
@@ -113,23 +148,72 @@ export async function startHost(options: {
           });
         }
       }
-      if (!clients.authenticate(req.headers.authorization))
-        return json(res, 401, {
-          error:
-            'This client is no longer authorized. Pair with the Mac again using its current pairing code.',
-          code: 'authorization_required',
-        });
+      const clientId = clients.authenticate(req.headers.authorization);
+      if (!clientId) return json(res, 401, authorizationRequired);
+      let revoked = false;
+      clientRequests.set(req, {
+        clientId,
+        revoke() {
+          revoked = true;
+          if (res.writableEnded || res.destroyed) return;
+          // End the response and body reader even when a peer never finishes its upload.
+          res.setHeader('Connection', 'close');
+          res.once('finish', () => req.destroy());
+          json(res, 401, authorizationRequired);
+        },
+      });
+      const forgetRequest = () => clientRequests.delete(req);
+      res.once('close', forgetRequest);
+      const authorize = () => {
+        if (revoked || clients.authenticate(req.headers.authorization) !== clientId)
+          throw new AuthorizationRequired();
+      };
+      // Keep each check and backend dispatch in the same synchronous turn. Body reads,
+      // inventory queries, archive extraction, and preceding commands can all yield to revoke.
+      const inventory = () => {
+        authorize();
+        return backend.inventory();
+      };
+      const run = (...args: Parameters<Backend['run']>) => {
+        authorize();
+        return backend.run(...args);
+      };
       try {
+        const download = pathname.match(/^\/recordings\/([\da-f-]{36})$/i);
+        if (download && req.method === 'GET') {
+          const ticket = req.headers['x-recording-ticket'];
+          const recording = media.recordings.download(
+            download[1],
+            typeof ticket === 'string' ? ticket : undefined,
+          );
+          if (!recording)
+            return json(res, 404, {
+              error: 'Recording expired or was discarded. Record it again.',
+            });
+          res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Content-Length': recording.bytes,
+            'Cache-Control': 'no-store',
+            'Content-Disposition': 'attachment; filename="Simulator.mp4"',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          try {
+            await pipeline(createReadStream(recording.file), res);
+          } catch {
+            res.destroy();
+          }
+          return;
+        }
         if (pathname === '/devices' && req.method === 'GET')
-          return json(res, 200, await backend.inventory());
+          return json(res, 200, await inventory());
         if (pathname === '/devices' && req.method === 'POST') {
           const data = createSchema.parse(await body(req));
-          const inventory = await backend.inventory();
-          const runtime = inventory.runtimes.find((r) => r.identifier === data.runtime);
-          if (!runtime || !inventory.devicetypes.some((d) => d.identifier === data.deviceType))
+          const devices = await inventory();
+          const runtime = devices.runtimes.find((r) => r.identifier === data.runtime);
+          if (!runtime || !devices.devicetypes.some((d) => d.identifier === data.deviceType))
             throw new Error('Choose an installed iOS runtime and device type.');
           const udid = String(
-            await backend.run(['create', data.name, data.deviceType, data.runtime]),
+            await run(['create', data.name, data.deviceType, data.runtime]),
           ).trim();
           return json(res, 201, { udid });
         }
@@ -144,9 +228,10 @@ export async function startHost(options: {
               throw new Error('Choose an app archive smaller than 128 MB.');
             chunks.push(chunk);
           }
+          authorize();
           const archive = await extractAppArchive(Buffer.concat(chunks));
           try {
-            await backend.run(['install', udid, archive.appPath]);
+            await run(['install', udid, archive.appPath]);
           } finally {
             await archive.close();
           }
@@ -159,25 +244,26 @@ export async function startHost(options: {
           const udid = uuid.parse(route[1]),
             action = route[2];
           if (action === 'screenshot' && req.method === 'GET') {
-            const data = await backend.run(['io', udid, 'screenshot', '--type=png', '-'], true);
+            const data = await run(['io', udid, 'screenshot', '--type=png', '-'], true);
+            authorize();
             res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
             res.end(data);
             return;
           }
           if (req.method !== 'POST') return json(res, 405, { error: 'Use POST for this action.' });
           if (action === 'boot') {
-            const inventory = await backend.inventory();
-            const device = inventory.devices.find((d) => d.udid === udid);
+            const devices = await inventory();
+            const device = devices.devices.find((d) => d.udid === udid);
             if (!device) throw new Error('This simulator no longer exists. Refresh the list.');
-            if (device.state !== 'Booted') await backend.run(['boot', udid]);
-            await backend.run(['bootstatus', udid, '-b']);
-          } else if (action === 'shutdown') await backend.run(['shutdown', udid]);
+            if (device.state !== 'Booted') await run(['boot', udid]);
+            await run(['bootstatus', udid, '-b']);
+          } else if (action === 'shutdown') await run(['shutdown', udid]);
           else if (action === 'text') {
             const data = z.object({ text: z.string().min(1).max(16000) }).parse(await body(req));
-            await backend.run(['pbcopy', udid], false, data.text);
+            await run(['pbcopy', udid], false, data.text);
           } else if (action === 'url') {
             const data = z.object({ url: z.string().url().max(8192) }).parse(await body(req));
-            await backend.run(['openurl', udid, data.url]);
+            await run(['openurl', udid, data.url]);
           } else if (action === 'location') {
             const data = z
               .object({
@@ -185,10 +271,10 @@ export async function startHost(options: {
                 longitude: z.number().min(-180).max(180),
               })
               .parse(await body(req));
-            await backend.run(['location', udid, 'set', `${data.latitude},${data.longitude}`]);
+            await run(['location', udid, 'set', `${data.latitude},${data.longitude}`]);
           } else if (action === 'appearance') {
             const data = z.object({ appearance: z.enum(['light', 'dark']) }).parse(await body(req));
-            await backend.run(['ui', udid, 'appearance', data.appearance]);
+            await run(['ui', udid, 'appearance', data.appearance]);
           }
           return json(res, 200, { ok: true });
         }
@@ -201,12 +287,16 @@ export async function startHost(options: {
               error: 'Confirm this command to change or delete simulator data.',
               confirmationRequired: true,
             });
-          return json(res, 200, { output: String(await backend.run(args)) });
+          return json(res, 200, { output: String(await run(args)) });
         }
         json(res, 404, { error: 'Unknown host action.' });
       } catch (e) {
+        if (e instanceof AuthorizationRequired) return json(res, 401, authorizationRequired);
         const error = e as Error & { stderr?: string };
         json(res, 400, { error: (error.stderr || error.message).slice(0, 3000) });
+      } finally {
+        forgetRequest();
+        res.off('close', forgetRequest);
       }
     },
   );
@@ -224,7 +314,13 @@ export async function startHost(options: {
       socket.destroy();
       return;
     }
-    const url = new URL(req.url ?? '/', 'https://localhost');
+    let url: URL;
+    try {
+      url = new URL(req.url ?? '/', 'https://localhost');
+    } catch {
+      socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+      return;
+    }
     const udid = url.pathname.match(/^\/stream\/([^/]+)$/)?.[1];
     if (!uuid.safeParse(udid).success) {
       socket.destroy();
@@ -242,16 +338,26 @@ export async function startHost(options: {
       }
       clientStreams.set(ws, clientId);
       ws.once('close', () => clientStreams.delete(ws));
-      wss.emit('connection', ws, udid, fps);
+      wss.emit('connection', ws, udid, fps, req.headers.authorization);
     });
   });
-  wss.on('connection', async (ws: WebSocket, udid: string, fps: number) => {
+  wss.on('connection', async (ws: WebSocket, udid: string, fps: number, authorization: string) => {
+    const clientId = clientStreams.get(ws);
+    const authorized = () => !!clientId && clients.authenticate(authorization) === clientId;
     const send = (value: object) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value));
     };
+    // A quality change or immediate reconnect may arrive while the old companion
+    // is draining releases. Wait for that closing lease instead of reporting a
+    // different controlling client or starting two companions for the same device.
+    ws.on('error', () => {});
+    const previous = controllers.get(udid);
+    if (previous && previous.readyState !== WebSocket.OPEN) await controllerClosers.get(udid)?.();
+    if (ws.readyState !== WebSocket.OPEN) return;
     if (controllers.has(udid)) {
       send({
         type: 'error',
+        terminal: true,
         message: 'This simulator is controlled by another client. Disconnect that client first.',
       });
       ws.close();
@@ -261,24 +367,35 @@ export async function startHost(options: {
     let session: Awaited<ReturnType<Backend['session']>> | undefined;
     let pending: ReturnType<Backend['session']> | undefined;
     let closing: Promise<void> | undefined;
+    const peer = new MediaPeer(ws, udid, fps, media, (settings) =>
+      session?.setVideoSettings?.(settings),
+    );
+    const mediaTimer = setInterval(() => peer.tick(), 1000);
     let sentDimensions = '';
+    const metadataKey = (metadata: StreamMeta) => JSON.stringify(metadata);
     const abort = new AbortController();
     let alive = true,
       opening = true;
     const cleanup = (): Promise<void> => {
       alive = false;
       abort.abort();
+      clearInterval(mediaTimer);
       return (closing ??= (async () => {
+        await peer.close().catch(() => {});
         try {
           await (session ?? (await pending))?.close();
         } catch {
           /* Startup may have been canceled. */
         }
-        if (controllers.get(udid) === ws) controllers.delete(udid);
+        if (controllers.get(udid) === ws) {
+          controllers.delete(udid);
+          controllerClosers.delete(udid);
+        }
         streamClosers.delete(cleanup);
         socketClosers.delete(ws);
       })());
     };
+    controllerClosers.set(udid, cleanup);
     streamClosers.add(cleanup);
     socketClosers.set(ws, cleanup);
     ws.on('close', () => {
@@ -302,7 +419,7 @@ export async function startHost(options: {
     let rateStart = Date.now(),
       count = 0;
     ws.on('message', (raw) => {
-      if (!alive) return;
+      if (!alive || ws.readyState !== WebSocket.OPEN || !authorized()) return;
       if (Date.now() - rateStart > 1000) {
         rateStart = Date.now();
         count = 0;
@@ -313,7 +430,9 @@ export async function startHost(options: {
         return;
       }
       try {
-        const event = inputSchema.parse(JSON.parse(raw.toString()));
+        const value = JSON.parse(raw.toString());
+        if (peer.handle(value)) return;
+        const event = inputSchema.parse(value);
         if (session) session.input(event);
         else if (!opening) throw new Error('The input service is unavailable.');
       } catch (e) {
@@ -321,17 +440,33 @@ export async function startHost(options: {
       }
     });
     try {
+      if (!authorized()) throw new AuthorizationRequired();
+      const device = (await backend.inventory()).devices.find((d) => d.udid === udid);
+      if (!device || device.state !== 'Booted') {
+        send({
+          type: 'error',
+          terminal: true,
+          message: device
+            ? 'This simulator is not booted. Start it explicitly before connecting.'
+            : 'This simulator no longer exists.',
+        });
+        ws.close();
+        return;
+      }
+      if (!alive || !authorized()) return;
       pending = backend.session(
         udid,
         fps,
         (data) => {
-          if (alive && ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 2 * 1024 * 1024) {
-            if (
-              session &&
-              sentDimensions !== `${session.metadata.width}x${session.metadata.height}`
-            ) {
+          if (
+            alive &&
+            authorized() &&
+            ws.readyState === WebSocket.OPEN &&
+            peer.video.allow(data.length, ws.bufferedAmount)
+          ) {
+            if (session && sentDimensions !== metadataKey(session.metadata)) {
               send({ type: 'metadata', metadata: session.metadata });
-              sentDimensions = `${session.metadata.width}x${session.metadata.height}`;
+              sentDimensions = metadataKey(session.metadata);
             }
             ws.send(data);
           }
@@ -344,8 +479,12 @@ export async function startHost(options: {
       );
       session = await pending;
       opening = false;
+      session.setVideoSettings?.(peer.video.settings);
       if (!alive) await cleanup();
-      else send({ type: 'metadata', metadata: session.metadata });
+      else {
+        sentDimensions = metadataKey(session.metadata);
+        send({ type: 'metadata', metadata: session.metadata });
+      }
     } catch (e) {
       opening = false;
       send({ type: 'error', message: (e as Error).message });
@@ -376,8 +515,12 @@ export async function startHost(options: {
           (id) => [...clientStreams.values()].filter((value) => value === id).length,
         );
       await clients.revoke(data.id);
-      for (const [ws, id] of clientStreams) {
-        if (id !== data.id) continue;
+      for (const request of clientRequests.values()) {
+        if (request.clientId === data.id) request.revoke();
+      }
+      const matching = [...clientStreams].filter(([, id]) => id === data.id);
+      // Close every transport before starting or awaiting any backend cleanup.
+      for (const [ws] of matching) {
         if (ws.readyState === WebSocket.OPEN)
           ws.send(
             JSON.stringify({
@@ -387,11 +530,24 @@ export async function startHost(options: {
             }),
           );
         ws.close(4003, 'Authorization revoked');
-        // Cleanup cannot depend on an uncooperative remote client completing the close handshake.
-        await socketClosers.get(ws)?.();
-        const timeout = setTimeout(() => ws.terminate(), 1000);
+        const timeout = setTimeout(() => ws.terminate(), streamCloseTimeout);
         timeout.unref();
         ws.once('close', () => clearTimeout(timeout));
+      }
+      // A stalled or failed companion cannot prevent the other cleanups or block local admin.
+      // Retain its controller lease until cleanup actually finishes.
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.allSettled(
+            matching.map(([ws]) => Promise.resolve().then(() => socketClosers.get(ws)?.())),
+          ),
+          new Promise<void>((resolve) => {
+            timeout = setTimeout(resolve, streamCloseTimeout);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
       }
       return { revoked: data.id };
     });

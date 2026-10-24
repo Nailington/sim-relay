@@ -28,6 +28,8 @@ buildNpmPackage {
       ../index.html
       ../src
       ../scripts/build.mjs
+      ../scripts/build-native.mjs
+      ../native
       ../assets/app-icon.svg
       ../THIRD_PARTY_NOTICES.md
     ];
@@ -36,6 +38,9 @@ buildNpmPackage {
   nodejs = nodejs_24;
   npmDepsHash = "sha256-zWUz0lO3pne1boBFBlw5MyY9eJIIzPP906FSla+EKTg=";
   ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
+  # Nix's sandbox cannot use the separately installed Xcode SDK. Audio remains an
+  # optional runtime capability; a host owner may supply SIM_RELAY_AUDIO_HELPER.
+  SIM_RELAY_SKIP_NATIVE_AUDIO = "1";
 
   nativeBuildInputs = [
     makeWrapper

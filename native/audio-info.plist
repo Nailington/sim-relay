@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>dev.simrelay.audio</string>
+  <key>CFBundleName</key><string>Sim Relay Audio</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>NSAudioCaptureUsageDescription</key><string>Share Mac playback audio with the paired Sim Relay client. Audio includes every app on this Mac.</string>
+  <key>NSScreenCaptureUsageDescription</key><string>Capture Mac playback audio for Sim Relay. No desktop video is sent.</string>
+</dict></plist>

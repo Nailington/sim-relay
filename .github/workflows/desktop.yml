@@ -62,6 +62,9 @@ jobs:
       - name: Test browser renderer hydration
         if: runner.os == 'Linux'
         run: node --import tsx tests/browser-renderer-smoke.ts
+      - name: Test native display sessions with a fake Mac host
+        if: runner.os == 'Linux'
+        run: node --import tsx tests/native-session-smoke.ts
       - name: Package (sign only on release builds when enabled)
         run: node scripts/package-desktop.mjs ${{ matrix.platform }} ${{ matrix.arch }}
         env:

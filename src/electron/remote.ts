@@ -1,6 +1,7 @@
 import https from 'node:https';
 import { X509Certificate } from 'node:crypto';
 import type { Profile, Probe } from '../shared/types';
+import { SessionFailure } from './session';
 import { parseHostInfo } from '../shared/host-info';
 
 export function hostUrl(value: string): URL {
@@ -79,10 +80,12 @@ export async function remoteRequest(
   method: string,
   pathname: string,
   body?: unknown,
+  timeoutOrSignal: number | AbortSignal = method === 'GET' ? 15000 : 130000,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   if (
     !['GET', 'POST'].includes(method) ||
-    !/^\/(devices(?:\/[^/]+\/(?:boot|shutdown|screenshot|url|location|appearance|install|text))?|command|pair)$/.test(
+    !/^\/(info|devices(?:\/[^/]+\/(?:boot|shutdown|screenshot|url|location|appearance|install|text))?|command|pair)$/.test(
       pathname,
     )
   )
@@ -96,7 +99,9 @@ export async function remoteRequest(
       {
         method,
         ...tlsOptions(profile),
-        timeout: 130000,
+        timeout:
+          typeof timeoutOrSignal === 'number' ? timeoutOrSignal : method === 'GET' ? 15000 : 130000,
+        signal: typeof timeoutOrSignal === 'number' ? signal : timeoutOrSignal,
         headers: {
           Authorization: `Bearer ${profile.token}`,
           ...(encoded
@@ -121,7 +126,12 @@ export async function remoteRequest(
           if ((res.statusCode ?? 500) >= 400) {
             try {
               const data = JSON.parse(buffer.toString());
-              reject(new Error(data.error ?? `Host returned HTTP ${res.statusCode}.`));
+              reject(
+                new SessionFailure(
+                  data.error ?? `Host returned HTTP ${res.statusCode}.`,
+                  [401, 403, 404, 409, 426].includes(res.statusCode ?? 0),
+                ),
+              );
             } catch {
               reject(new Error(`Host returned HTTP ${res.statusCode}.`));
             }

@@ -60,7 +60,16 @@ test(
     const released: string[] = [],
       inputs: string[] = [];
     const backend: Backend = {
-      inventory: async () => ({ devices: [], runtimes: [], devicetypes: [] }),
+      inventory: async () => ({
+        devices: [deviceA, deviceB].map((udid) => ({
+          udid,
+          name: udid,
+          state: 'Booted',
+          runtime: 'iOS fake',
+        })),
+        runtimes: [],
+        devicetypes: [],
+      }),
       run: async () => '',
       session: async (udid) => ({
         metadata: { width: 100, height: 200, widthPoints: 100, heightPoints: 200 },

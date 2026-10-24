@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Activity,
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
@@ -8,14 +9,13 @@ import {
   ChevronDown,
   ChevronRight,
   CircleHelp,
-  Code2,
   Globe2,
   House,
   Keyboard,
-  Laptop,
   Link2,
   LockKeyhole,
   Maximize2,
+  ExternalLink,
   Monitor,
   Moon,
   Plus,
@@ -25,9 +25,7 @@ import {
   RotateCw,
   Search,
   Settings2,
-  ShieldCheck,
   Smartphone,
-  Sparkles,
   Sun,
   Tablet,
   Terminal,
@@ -36,16 +34,35 @@ import {
   Wifi,
   X,
 } from 'lucide-react';
-import type { HostEntry, Inventory, Simulator, StreamMeta, InputEvent } from '../shared/types';
+import type {
+  HostEntry,
+  Inventory,
+  Simulator,
+  StreamMeta,
+  InputEvent,
+  DisplayContext,
+} from '../shared/types';
 import { Busy, IconButton, Modal } from './components';
 import { DeviceStage } from './DeviceStage';
+import { MediaControls } from './MediaControls';
 import { demoHosts, demoInventory } from './demo';
+import { DiagnosticsModal } from './DiagnosticsModal';
+import { explainFailure, redactSecrets } from '../shared/diagnostics';
 import { PairModal, CreateModal, HostModal, ActionModal } from './dialogs';
 
 const empty: Inventory = { devices: [], runtimes: [], devicetypes: [] };
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 type ModalKind =
-  'pair' | 'create' | 'host' | 'help' | 'url' | 'command' | 'location' | 'text' | null;
+  | 'diagnostics'
+  | 'pair'
+  | 'create'
+  | 'host'
+  | 'help'
+  | 'url'
+  | 'command'
+  | 'location'
+  | 'text'
+  | null;
 
 export function App() {
   const api = window.relay;
@@ -64,12 +81,18 @@ export function App() {
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
   const [stream, setStream] = useState<'off' | 'connecting' | 'live'>(!api ? 'live' : 'off');
+  const [connectionStatus, setConnectionStatus] = useState('');
+  const [canRetry, setCanRetry] = useState(false);
   const [metadata, setMetadata] = useState<StreamMeta>();
   const [fps, setFps] = useState(0);
   const [targetFps, setTargetFps] = useState(30);
   const [homeSignal, setHomeSignal] = useState(0);
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState<boolean>();
   const [zoom, setZoom] = useState(false);
+  const [controls, setControls] = useState(() => window.innerWidth > 800);
+  const failure = error
+    ? explainFailure(error, stream === 'connecting' ? 'stream' : 'action')
+    : undefined;
   const selected = inventory.devices.find((d) => d.udid === selectedId);
   const currentHost = useRef(host?.id);
   currentHost.current = host?.id;
@@ -117,6 +140,10 @@ export function App() {
   }, [api, host, selectedId, targetFps]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !modal && zoom) {
+        setZoom(false);
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k' && host) {
         event.preventDefault();
         setModal('command');
@@ -133,7 +160,7 @@ export function App() {
     };
     window.addEventListener('keydown', shortcut);
     return () => window.removeEventListener('keydown', shortcut);
-  }, [host, modal]);
+  }, [host, modal, zoom]);
   const closeModal = useCallback(() => setModal(null), []);
   const reportError = useCallback((message: string) => setError(message), []);
   const notify = (message: string) => setToast(message);
@@ -165,6 +192,23 @@ export function App() {
   useEffect(() => {
     if (!api || demo) return;
     return api.onNotice((notice) => {
+      if (notice.type === 'status') {
+        setCanRetry(notice.state === 'retrying' || notice.state === 'failed');
+        setConnectionStatus(
+          notice.state === 'retrying'
+            ? `${notice.message} Retry ${notice.attempt} in ${(notice.retryInMs ?? 0) / 1000}s.`
+            : (notice.message ?? ''),
+        );
+        if (notice.state === 'connecting' || notice.state === 'retrying') {
+          setStream('connecting');
+          setFps(0);
+        }
+        if (notice.state === 'off' || notice.state === 'failed') {
+          setStream('off');
+          setFps(0);
+        }
+        if (notice.state === 'failed') setError(notice.message ?? 'Cannot connect to this Mac.');
+      }
       if (notice.type === 'metadata') {
         setMetadata(notice.metadata);
         setStream('live');
@@ -179,6 +223,39 @@ export function App() {
       }
     });
   }, [api, demo]);
+  useEffect(() => {
+    if (!api) return;
+    const restore = (context: DisplayContext) => {
+      connectionAttempt.current++;
+      setDemo(false);
+      setHost(context.host);
+      currentHost.current = context.host.id;
+      setInventory((old) => ({ ...old, devices: [context.device] }));
+      setSelectedId(context.device.udid);
+      setTargetFps(context.fps);
+      setMetadata(undefined);
+      setStream(context.sessionActive ? 'connecting' : 'off');
+      setError('');
+      void api
+        .request<Inventory>(context.host.id, 'GET', '/devices')
+        .then((value) => {
+          if (currentHost.current === context.host.id) setInventory(value);
+        })
+        .catch((e) => setError(e.message));
+      if (context.sessionActive)
+        void api
+          .connect(context.host.id, context.device.udid, context.fps)
+          .catch((e) => setError(e.message));
+    };
+    const off = api.onReturnDisplay(restore);
+    void api
+      .displayContext()
+      .then((context) => {
+        if (context) restore(context);
+      })
+      .catch((e) => setError(e.message));
+    return off;
+  }, [api]);
   const refreshInventory = async (entry = host) => {
     if (!entry || entry.source === 'demo') return;
     const value = await api!.request<Inventory>(entry.id, 'GET', '/devices');
@@ -190,6 +267,8 @@ export function App() {
     connectionAttempt.current++;
     await api?.disconnect();
     setStream('off');
+    setConnectionStatus('');
+    setCanRetry(false);
     setMetadata(undefined);
     setFps(0);
   };
@@ -206,6 +285,7 @@ export function App() {
     setHost(entry);
     currentHost.current = entry.id;
     setSelectedId('');
+    setDark(undefined);
     setInventory(empty);
     if (entry.source === 'demo') {
       setDemo(true);
@@ -277,6 +357,7 @@ export function App() {
     if (busy || device.udid === selectedId) return;
     await stopStream();
     setSelectedId(device.udid);
+    setDark(undefined);
     setError('');
   };
   const input = (event: InputEvent) => {
@@ -313,349 +394,308 @@ export function App() {
   const allHosts = demo ? [...demoHosts, ...hosts] : hosts;
 
   return (
-    <div className={`app ${zoom ? 'expanded' : ''}`}>
-      <aside className="sidebar">
+    <div className={`app ${zoom ? 'expanded' : ''} ${controls ? '' : 'controls-hidden'}`}>
+      <aside className="sidebar" aria-label="Macs and simulators" inert={!!modal}>
         <div className="brand">
           <span className="brand-icon">
             <Radio size={23} />
           </span>
-          <div>
-            sim relay<span>YOUR MAC. ANYWHERE.</span>
-          </div>
-          <span className="version">α</span>
+          <strong>Sim Relay</strong>
         </div>
-        <div className="workspace-switch">
-          <div className="workspace-avatar">P</div>
-          <span>
-            Personal workspace<small>Local & direct connections</small>
-          </span>
-          <ChevronDown size={14} />
-        </div>
-        <div className="nav-label">WORKSPACE</div>
-        <button
-          className="nav-item selected"
-          onClick={() => {
-            setZoom(false);
-          }}
-        >
-          <Smartphone size={17} />
-          Simulators<span>{inventory.devices.length}</span>
-        </button>
-        <button className="nav-item" onClick={() => setModal('command')} disabled={!host}>
-          <Terminal size={17} />
-          Command panel<kbd>⌘ K</kbd>
-        </button>
-        <div className="host-heading">
-          <span className="nav-label">MAC HOSTS</span>
-          <IconButton
-            label="Add Mac"
-            onClick={() => {
-              setPairUrl('');
-              setModal('pair');
-            }}
-          >
-            <Plus size={15} />
-          </IconButton>
-        </div>
-        <div className="host-list">
-          {allHosts.map((entry) => (
-            <button
-              key={entry.id}
-              className={`host-item ${host?.id === entry.id ? 'selected' : ''}`}
-              onClick={() => void chooseHost(entry)}
-              disabled={!!busy}
+        <section className="host-section" aria-labelledby="macs-heading">
+          <div className="rail-heading">
+            <h2 id="macs-heading">Macs</h2>
+            <IconButton
+              label="Connect a Mac"
+              onClick={() => {
+                setPairUrl('');
+                setModal('pair');
+              }}
             >
-              <span className="host-glyph">
-                {entry.name.includes('Book') ? <Laptop size={22} /> : <Monitor size={22} />}
-                <i className={entry.source === 'discovered' ? 'discovered-dot' : ''} />
-              </span>
-              <span>
-                {entry.name}
-                <small>
-                  {entry.source === 'demo'
-                    ? 'Demo host'
-                    : entry.source === 'saved'
-                      ? entry.sessionOnly
-                        ? 'Paired · this session'
-                        : 'Paired Mac'
-                      : 'Nearby · pair to connect'}
-                </small>
-              </span>
-              {host?.id === entry.id && <ChevronRight size={14} />}
-            </button>
-          ))}
-          {!allHosts.length && (
-            <p className="discover-empty">
-              <Wifi size={20} />
-              Looking for Macs on your network<small>Start sharing on a Mac to find it here.</small>
-            </p>
-          )}
-        </div>
-        <button
-          className="add-host"
-          onClick={() => {
-            setPairUrl('');
-            setModal('pair');
-          }}
-        >
-          <Plus size={15} /> Connect a Mac
-        </button>
-        <div className="sidebar-bottom">
-          <div className="host-promo">
-            <span className="mini-brand">
-              <Cable size={18} />
-            </span>
-            <strong>Put your Mac to work.</strong>
-            <p>Share its simulators with any computer on your network.</p>
-            <button onClick={() => setModal('host')}>
-              Set up a Mac host <ArrowUpRight size={14} />
-            </button>
-          </div>
-          <button className="nav-item" onClick={() => setModal('help')}>
-            <CircleHelp size={17} />
-            Getting started
-            <ArrowUpRight size={14} />
-          </button>
-          <div className="sidebar-foot">
-            <span className="green-dot" />
-            Local first. Cloud free.<span>v0.1.0</span>
-          </div>
-        </div>
-      </aside>
-      <main className="main">
-        <header className="topbar">
-          <div>
-            <span>Workspace</span>
-            <ChevronRight size={13} />
-            <strong>Simulators</strong>
-          </div>
-          <div>
-            <span className={`connection-badge ${demo ? 'demo' : ''}`}>
-              <span className={demo ? 'amber-dot' : host ? 'green-dot' : 'gray-dot'} />
-              {demo ? 'Demo workspace' : host ? 'Paired host' : 'No Mac connected'}
-            </span>
-            <IconButton label="Connection help" onClick={() => setModal('help')}>
-              <CircleHelp size={17} />
+              <Plus size={16} />
             </IconButton>
-            <div className="profile-avatar">P</div>
           </div>
-        </header>
-        <div className="main-body">
-          <section className="page-heading">
-            <div className="eyebrow">
-              <span className="little-line" /> THE REMOTE SIMULATOR WORKSPACE
-            </div>
-            <div className="heading-row">
-              <div>
-                <h1>Big ideas. Any screen.</h1>
-                <p>Your iOS simulators, right here. Powered by your Mac.</p>
-              </div>
+          <div className="host-list">
+            {allHosts.map((entry) => (
               <button
-                className="button primary"
-                onClick={() => {
-                  if (!host) setModal('pair');
-                  else setModal('create');
-                }}
+                key={entry.id}
+                className={`host-item ${host?.id === entry.id ? 'selected' : ''}`}
+                aria-pressed={host?.id === entry.id}
                 disabled={!!busy}
+                onClick={() => void chooseHost(entry)}
               >
-                <Plus size={16} />
-                {host ? 'New simulator' : 'Connect a Mac'}
+                <Monitor size={19} />
+                <span>
+                  <strong>{entry.name}</strong>
+                  <small>
+                    {entry.source === 'demo'
+                      ? 'Simulated preview'
+                      : entry.source === 'discovered'
+                        ? 'Nearby • Pair to connect'
+                        : entry.sessionOnly
+                          ? 'Paired for this session'
+                          : 'Paired'}
+                  </small>
+                </span>
+                {host?.id === entry.id && <Check size={14} />}
               </button>
-            </div>
-          </section>
-          {demo && (
-            <div className="demo-banner">
-              <Sparkles size={15} />
-              <span>You’re exploring a demo. Connect your Mac for live simulators.</span>
+            ))}
+          </div>
+          {!allHosts.length && (
+            <div className="discover-empty">
+              <Wifi size={20} />
+              <p>Searching for nearby Macs.</p>
+              <small>Start sharing on the Mac, or connect using its address.</small>
               <button
+                className="button secondary"
                 onClick={() => {
                   setPairUrl('');
                   setModal('pair');
                 }}
               >
-                Connect a Mac <ArrowRight size={14} />
+                Connect a Mac
               </button>
             </div>
           )}
-          {error && (
-            <div className="error-banner" role="alert">
-              <span>{error}</span>
-              <IconButton label="Dismiss error" onClick={() => setError('')}>
-                <X size={16} />
+        </section>
+        <section className="devices-section" aria-labelledby="simulators-heading">
+          <div className="rail-heading">
+            <h2 id="simulators-heading">Simulators</h2>
+            <div>
+              <IconButton
+                label="Refresh simulators"
+                disabled={!host || !!busy}
+                onClick={() =>
+                  void act('Refreshing simulators', async () => {
+                    if (demo) notify('Simulated list refreshed');
+                    else await refreshInventory();
+                  })
+                }
+              >
+                <RefreshCw size={15} />
+              </IconButton>
+              <IconButton
+                label="Create simulator"
+                disabled={!host || !!busy}
+                onClick={() => setModal('create')}
+              >
+                <Plus size={16} />
               </IconButton>
             </div>
-          )}
-          <section className="host-strip">
-            <div className="host-strip-icon">
-              <Monitor size={21} />
-            </div>
-            <div>
-              <strong>{host?.name ?? 'Your next workspace starts with a Mac'}</strong>
-              <span>
-                {host
-                  ? host.url.replace('https://', '')
-                  : 'Discover a nearby Mac or connect directly with its address.'}
-              </span>
-            </div>
-            <div className="host-strip-right">
-              {host ? (
-                <>
-                  <span className="subtle-badge">
-                    <span className={demo ? 'amber-dot' : 'green-dot'} />
-                    {demo ? 'Preview' : host.sessionOnly ? 'This session' : 'Paired'}
-                  </span>
-                  <span className="vertical-rule" />
-                  <Wifi size={15} />
-                  <span>{demo ? 'Demo network' : 'Direct connection'}</span>
-                  <IconButton
-                    label="Refresh simulators"
-                    disabled={!!busy}
-                    onClick={() =>
-                      void act('Refreshing', async () => {
-                        if (demo) {
-                          await delay(300);
-                          notify('Demo simulators refreshed');
-                        } else await refreshInventory();
-                      })
-                    }
-                  >
-                    <RefreshCw size={15} />
-                  </IconButton>
-                  {!demo && (
-                    <IconButton
-                      label="Forget this Mac"
-                      disabled={!!busy}
-                      onClick={() =>
-                        void act('Forgetting Mac', async () => {
-                          await stopStream();
-                          await api!.forget(host.id);
-                          setHost(undefined);
-                          setInventory(empty);
-                          setSelectedId('');
-                          setHosts(await api!.hosts());
-                        })
-                      }
-                    >
-                      <Unplug size={15} />
-                    </IconButton>
-                  )}
-                </>
-              ) : (
-                <button className="button secondary small" onClick={explore}>
-                  Explore demo <ArrowRight size={14} />
-                </button>
-              )}
-            </div>
-          </section>
-          <section className="devices-section">
-            <div className="section-toolbar">
-              <div className="tabs">
-                <button
-                  className={filter === 'all' ? 'active' : ''}
-                  onClick={() => setFilter('all')}
-                >
-                  All simulators <span>{inventory.devices.length}</span>
-                </button>
-                <button
-                  className={filter === 'running' ? 'active' : ''}
-                  onClick={() => setFilter('running')}
-                >
-                  Running{' '}
-                  <span>{inventory.devices.filter((d) => d.state === 'Booted').length}</span>
-                </button>
-              </div>
+          </div>
+          {host ? (
+            <>
               <label className="search">
                 <Search size={15} />
                 <input
                   ref={searchInput}
                   aria-label="Search simulators"
+                  placeholder="Search simulators"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Find a simulator…"
                 />
                 <kbd>/</kbd>
               </label>
-            </div>
-            <div className="device-cards">
-              {filtered.map((device) => (
+              <div className="tabs" aria-label="Filter simulators">
                 <button
-                  key={device.udid}
-                  className={`device-card ${selectedId === device.udid ? 'active' : ''}`}
-                  onClick={() => void selectDevice(device)}
-                  disabled={!!busy}
+                  aria-pressed={filter === 'all'}
+                  className={filter === 'all' ? 'active' : ''}
+                  onClick={() => setFilter('all')}
                 >
-                  <span className="device-miniature">
-                    {device.name.includes('iPad') ? (
-                      <Tablet size={35} strokeWidth={1.1} />
-                    ) : (
-                      <Smartphone size={34} strokeWidth={1.1} />
-                    )}
-                  </span>
-                  <span className="device-card-copy">
-                    <strong>{device.name}</strong>
-                    <small>
-                      {device.runtime} <span>·</span>{' '}
-                      {device.name.includes('iPad') ? 'iPad' : 'iPhone'}
-                    </small>
-                    <span className={`device-state ${device.state === 'Booted' ? 'running' : ''}`}>
-                      <i />
-                      {device.state === 'Booted'
-                        ? 'Running'
-                        : device.state === 'Shutdown'
-                          ? 'Powered off'
-                          : device.state}
+                  All ({inventory.devices.length})
+                </button>
+                <button
+                  aria-pressed={filter === 'running'}
+                  className={filter === 'running' ? 'active' : ''}
+                  onClick={() => setFilter('running')}
+                >
+                  Running ({inventory.devices.filter((d) => d.state === 'Booted').length})
+                </button>
+              </div>
+              <div className="device-cards">
+                {filtered.map((device) => (
+                  <button
+                    key={device.udid}
+                    className={`device-card ${selectedId === device.udid ? 'active' : ''}`}
+                    aria-pressed={selectedId === device.udid}
+                    onClick={() => void selectDevice(device)}
+                    disabled={!!busy}
+                  >
+                    {device.name.includes('iPad') ? <Tablet size={24} /> : <Smartphone size={24} />}
+                    <span className="device-card-copy">
+                      <strong>{device.name}</strong>
+                      <small>{device.runtime}</small>
+                      <span
+                        className={`device-state ${device.state === 'Booted' ? 'running' : ''}`}
+                      >
+                        <i />
+                        {device.state === 'Booted'
+                          ? 'Running'
+                          : device.state === 'Shutdown'
+                            ? 'Powered off'
+                            : device.state}
+                      </span>
                     </span>
-                  </span>
-                  {selectedId === device.udid && (
-                    <span className="selected-check">
-                      <Check size={11} />
-                    </span>
+                  </button>
+                ))}
+              </div>
+              {!filtered.length && (
+                <div className="empty-list">
+                  <p>
+                    {query || filter !== 'all'
+                      ? 'No matching simulators.'
+                      : busy
+                        ? 'Loading simulators…'
+                        : 'No simulators on this Mac.'}
+                  </p>
+                  {query || filter !== 'all' ? (
+                    <button
+                      onClick={() => {
+                        setQuery('');
+                        setFilter('all');
+                      }}
+                    >
+                      Clear filters
+                    </button>
+                  ) : (
+                    !busy && <button onClick={() => setModal('create')}>Create simulator</button>
                   )}
-                </button>
-              ))}
-              {host && (
-                <button
-                  className="new-device-card"
-                  onClick={() => setModal('create')}
-                  disabled={!!busy}
-                >
-                  <span>
-                    <Plus size={18} />
-                  </span>
-                  <strong>Create a simulator</strong>
-                  <small>Make room for another idea.</small>
-                </button>
-              )}
-            </div>
-            {!filtered.length && host && (
-              <p className="empty-list">
-                {query || filter !== 'all'
-                  ? 'No simulators match this view.'
-                  : 'No iOS simulators yet. Create one using an installed iOS runtime.'}
-              </p>
-            )}
-          </section>
-          {selected ? (
-            <section className="viewer-panel">
-              <header className="viewer-heading">
-                <span className="viewer-device-icon">
-                  <Smartphone size={18} />
-                </span>
-                <div>
-                  <strong>{selected.name}</strong>
-                  <span>{selected.runtime}</span>
                 </div>
-                <span className={`stream-badge ${stream === 'live' ? 'live' : ''}`}>
+              )}
+            </>
+          ) : (
+            <p className="rail-hint">Choose a Mac to load its simulators.</p>
+          )}
+        </section>
+        <div className="sidebar-bottom">
+          <button className="nav-item" onClick={() => setModal('host')}>
+            <Cable size={16} />
+            {api?.platform === 'darwin' ? 'Share this Mac' : 'Mac host setup'}
+          </button>
+          {!demo && (
+            <button className="nav-item" onClick={explore}>
+              <Smartphone size={16} />
+              Explore simulated preview
+            </button>
+          )}
+        </div>
+      </aside>
+      <main className="main" inert={!!modal}>
+        <header className="topbar">
+          <div className="workspace-context">
+            <Monitor size={17} />
+            <strong>{host?.name ?? 'No Mac selected'}</strong>
+            {host && (
+              <span className="host-address" title={host.url}>
+                {host.url.replace('https://', '')}
+              </span>
+            )}
+          </div>
+          <div className="workspace-actions">
+            <button
+              className="button quiet"
+              aria-label="Run simctl command"
+              disabled={!host}
+              onClick={() => setModal('command')}
+              title="Run simctl commands (Ctrl+K / Cmd+K)"
+            >
+              <Terminal size={16} />
+              <span>Command</span>
+            </button>
+            <button
+              className="button quiet"
+              aria-label="Diagnostics"
+              onClick={() => setModal('diagnostics')}
+            >
+              <Activity size={16} />
+              <span>Diagnostics</span>
+            </button>
+            <IconButton label="Connection and keyboard help" onClick={() => setModal('help')}>
+              <CircleHelp size={18} />
+            </IconButton>
+            {host && !demo && (
+              <details className="host-menu">
+                <summary aria-label="Mac options" title="Mac options">
+                  <ChevronDown size={16} />
+                </summary>
+                <button
+                  onClick={() =>
+                    void act('Forgetting Mac', async () => {
+                      await stopStream();
+                      await api!.forget(host.id);
+                      setHost(undefined);
+                      setInventory(empty);
+                      setSelectedId('');
+                      setHosts(await api!.hosts());
+                    })
+                  }
+                >
+                  Forget {host.name}
+                </button>
+                <p>Removes this computer’s saved pairing.</p>
+              </details>
+            )}
+          </div>
+        </header>
+        {demo && (
+          <div className="demo-banner">
+            <span>
+              <strong>Simulated preview</strong> • No real Mac or simulator is connected.
+            </span>
+            <button
+              onClick={() => {
+                setPairUrl('');
+                setModal('pair');
+              }}
+            >
+              Connect a Mac <ArrowRight size={14} />
+            </button>
+          </div>
+        )}
+        {failure && (
+          <div className="error-banner" role="alert">
+            <div>
+              <strong>{failure.title}</strong>
+              <p>{failure.next}</p>
+              <details>
+                <summary>Technical details</summary>
+                <pre>{redactSecrets(error)}</pre>
+              </details>
+            </div>
+            <button className="button secondary small" onClick={() => setModal('diagnostics')}>
+              Diagnostics
+            </button>
+            <IconButton label="Dismiss error" onClick={() => setError('')}>
+              <X size={16} />
+            </IconButton>
+          </div>
+        )}
+        <div className="main-body">
+          {selected ? (
+            <section className="viewer-panel" aria-label={`${selected.name} on ${host?.name}`}>
+              <header className="viewer-heading">
+                <div className="viewer-identity">
+                  <Smartphone size={20} />
+                  <div>
+                    <h1>{selected.name}</h1>
+                    <span>{selected.runtime}</span>
+                  </div>
+                </div>
+                <span
+                  className={`stream-badge ${stream === 'live' && !demo ? 'live' : ''}`}
+                  role="status"
+                >
                   <i />
                   {demo && stream === 'live'
-                    ? 'Demo display'
+                    ? 'Preview'
                     : stream === 'live'
-                      ? 'Live display'
+                      ? 'Live'
                       : stream === 'connecting'
-                        ? 'Connecting'
-                        : 'Display disconnected'}
+                        ? 'Connecting…'
+                        : 'Disconnected'}
                 </span>
                 <div className="viewer-heading-actions">
+                  {/* Session/window actions belong here: pop out, retry, cancel, return. */}
                   {stream === 'off' ? (
                     <button
                       className="button primary small"
@@ -674,32 +714,58 @@ export function App() {
                       <Unplug size={16} />
                     </IconButton>
                   )}
+                  {!demo && api && (
+                    <IconButton
+                      label="Pop out display"
+                      disabled={!!busy}
+                      onClick={() =>
+                        void act('Opening display window', () =>
+                          api.popOut(host!.id, selected.udid, targetFps),
+                        )
+                      }
+                    >
+                      <ExternalLink size={16} />
+                    </IconButton>
+                  )}
+                  <IconButton
+                    label={controls ? 'Hide simulator controls' : 'Show simulator controls'}
+                    active={controls}
+                    onClick={() => setControls(!controls)}
+                  >
+                    <Settings2 size={17} />
+                  </IconButton>
                   <IconButton
                     label={zoom ? 'Exit expanded view' : 'Expand display'}
                     active={zoom}
                     onClick={() => setZoom(!zoom)}
                   >
-                    <Maximize2 size={16} />
+                    <Maximize2 size={17} />
                   </IconButton>
                 </div>
               </header>
+              {connectionStatus && (
+                <div className="display-connection" role="status">
+                  {connectionStatus}
+                  {canRetry && (
+                    <>
+                      <button onClick={() => void act('Retrying connection', () => api!.retry())}>
+                        Retry now
+                      </button>
+                      <button onClick={() => void stopStream()}>Cancel retries</button>
+                    </>
+                  )}
+                </div>
+              )}
               <div className="viewer-content">
                 <div className="display-area">
                   {stream === 'off' ? (
                     <div className="display-empty">
-                      <span>
-                        <Smartphone size={40} strokeWidth={1} />
-                      </span>
-                      <h2>A little closer to your next idea.</h2>
-                      <p>Start this simulator and connect its display.</p>
-                      <button
-                        className="button primary"
-                        disabled={!!busy}
-                        onClick={() => void connect()}
-                      >
-                        <Power size={15} />
-                        Start & connect
-                      </button>
+                      <Smartphone size={38} strokeWidth={1.3} />
+                      <h2>{selected.name} is disconnected</h2>
+                      <p>Use Start & connect above to boot this simulator and open its display.</p>
+                      <p className="field-hint">
+                        Disconnecting leaves the simulator running on {host?.name}.
+                      </p>
                     </div>
                   ) : (
                     <DeviceStage
@@ -714,17 +780,28 @@ export function App() {
                   )}
                   {stream === 'connecting' && (
                     <div className="display-loading">
-                      <Busy text="Connecting to your simulator…" />
+                      <Busy text={busy || 'Connecting display…'} />
                       <p>First boot can take a few minutes.</p>
                     </div>
                   )}
                 </div>
                 <aside className="inspector">
                   <div className="inspector-title">
-                    <Settings2 size={15} /> Simulator controls
+                    <Settings2 size={15} /> Controls
                   </div>
+                  <MediaControls
+                    api={demo ? undefined : api}
+                    connected={stream === 'live'}
+                    maxFps={targetFps}
+                    onError={reportError}
+                  />
+                  {!canControl && (
+                    <p className="control-prerequisite">
+                      Connect the display to use simulator controls.
+                    </p>
+                  )}
                   <div className="control-group">
-                    <span className="control-label">HARDWARE</span>
+                    <span className="control-label">Hardware</span>
                     <div className="control-grid">
                       {[
                         [House, 'Home', () => input({ type: 'button', button: 'HOME' })],
@@ -736,7 +813,11 @@ export function App() {
                             input({
                               type: 'rotate',
                               orientation:
-                                metadata && metadata.width > metadata.height
+                                metadata &&
+                                (metadata.orientation?.startsWith('LANDSCAPE') ||
+                                  metadata.rotation === 90 ||
+                                  metadata.rotation === 270 ||
+                                  metadata.width > metadata.height)
                                   ? 'PORTRAIT'
                                   : 'LANDSCAPE_LEFT',
                             });
@@ -748,7 +829,7 @@ export function App() {
                         return (
                           <button
                             key={label as string}
-                            disabled={!canControl}
+                            disabled={!canControl || !!busy}
                             onClick={action as () => void}
                           >
                             <Glyph size={18} />
@@ -759,13 +840,13 @@ export function App() {
                     </div>
                     <div className="control-inline">
                       <button
-                        disabled={!canControl}
+                        disabled={!canControl || !!busy}
                         onClick={() => input({ type: 'button', button: 'VOLUME_DOWN' })}
                       >
                         Volume −
                       </button>
                       <button
-                        disabled={!canControl}
+                        disabled={!canControl || !!busy}
                         onClick={() => input({ type: 'button', button: 'VOLUME_UP' })}
                       >
                         Volume +
@@ -773,10 +854,15 @@ export function App() {
                     </div>
                   </div>
                   <div className="control-group">
-                    <span className="control-label">QUICK ACTIONS</span>
+                    <span className="control-label">Tools</span>
                     <button
                       className="tool-row"
-                      disabled={!canControl}
+                      disabled={!canControl || demo || !!busy}
+                      title={
+                        demo
+                          ? 'Connect a real Mac to save screenshots'
+                          : 'Save a PNG from this simulator'
+                      }
                       onClick={() =>
                         void act('Saving screenshot', async () => {
                           if (demo) {
@@ -793,7 +879,12 @@ export function App() {
                     </button>
                     <button
                       className="tool-row"
-                      disabled={!canControl || !!busy}
+                      disabled={!canControl || demo || !!busy}
+                      title={
+                        demo
+                          ? 'Connect a real Mac to install apps'
+                          : 'Install a zipped simulator app'
+                      }
                       onClick={() =>
                         void act('Installing app', async () => {
                           if (demo) {
@@ -810,7 +901,7 @@ export function App() {
                     </button>
                     <button
                       className="tool-row"
-                      disabled={!canControl}
+                      disabled={!canControl || !!busy}
                       onClick={() => setModal('url')}
                     >
                       <Link2 size={16} />
@@ -819,7 +910,7 @@ export function App() {
                     </button>
                     <button
                       className="tool-row"
-                      disabled={!canControl}
+                      disabled={!canControl || !!busy}
                       onClick={() => setModal('text')}
                     >
                       <Keyboard size={16} />
@@ -828,29 +919,20 @@ export function App() {
                     </button>
                     <button
                       className="tool-row"
-                      disabled={!canControl}
+                      disabled={!canControl || !!busy}
                       onClick={() => setModal('location')}
                     >
                       <Globe2 size={16} />
                       Set location
                       <ChevronRight size={13} />
                     </button>
-                    <button
-                      className="tool-row"
-                      disabled={!host}
-                      onClick={() => setModal('command')}
-                    >
-                      <Terminal size={16} />
-                      Run simctl command
-                      <ChevronRight size={13} />
-                    </button>
                   </div>
                   <div className="control-group">
-                    <span className="control-label">APPEARANCE</span>
+                    <span className="control-label">iOS appearance</span>
                     <div className="segmented">
                       <button
                         disabled={!canControl || !!busy}
-                        className={!dark ? 'active' : ''}
+                        className={dark === false ? 'active' : ''}
                         onClick={() =>
                           void act('Setting appearance', async () => {
                             if (!demo)
@@ -889,13 +971,13 @@ export function App() {
                     </div>
                   </div>
                   <div className="control-group">
-                    <span className="control-label">STREAM QUALITY</span>
+                    <span className="control-label">Stream</span>
                     <label className="quality-label">
                       Requested frame rate
                       <select
                         aria-label="Requested frame rate"
                         value={targetFps}
-                        disabled={!!busy}
+                        disabled={!!busy || stream !== 'off'}
                         onChange={(e) => {
                           const rate = Number(e.target.value);
                           setTargetFps(rate);
@@ -920,15 +1002,6 @@ export function App() {
                           : 'Connect to measure performance'}
                     </div>
                   </div>
-                  <div className="inspector-bottom">
-                    <ShieldCheck size={17} />
-                    <span>
-                      {demo ? 'A preview of your workspace' : 'Encrypted from Mac to client'}
-                      <small>
-                        {demo ? 'No real device is connected' : 'TLS · pinned host certificate'}
-                      </small>
-                    </span>
-                  </div>
                   <button
                     className="shutdown"
                     disabled={selected.state !== 'Booted' || !!busy}
@@ -942,80 +1015,55 @@ export function App() {
               <footer className="viewer-footer">
                 <span>
                   <Keyboard size={14} />
-                  Click the display to use your keyboard
+                  Click the display to type.{' '}
+                  <button onClick={() => setModal('help')}>Input help</button>
                 </span>
                 <span>
-                  {demo ? 'SIMULATED PREVIEW' : 'MJPEG / TLS'}
-                  <span className="green-dot" />
-                  {demo ? 'No Mac connected' : host?.name}
+                  {demo
+                    ? 'Simulated display'
+                    : stream === 'live'
+                      ? `TLS • ${fps} fps decoded`
+                      : 'No active stream'}
                 </span>
               </footer>
             </section>
           ) : (
             <section className="welcome-panel">
-              <div className="welcome-illustration">
-                <div>
-                  <Monitor size={60} strokeWidth={1} />
-                </div>
-                <span className="connection-line" />
-                <div>
-                  <Laptop size={52} strokeWidth={1} />
-                </div>
-                <span className="floating-phone">
-                  <Smartphone size={38} strokeWidth={1.2} />
-                  <i className="green-dot" />
-                </span>
-              </div>
-              <span className="eyebrow">ONE MAC. ALL YOUR COMPUTERS.</span>
-              <h2>Your simulator has a new home.</h2>
+              <Radio size={42} strokeWidth={1.3} />
+              <h1>{host ? 'Choose a simulator' : 'Connect to your Mac'}</h1>
               <p>
-                Run iOS on your Mac. See, touch, and test it from
-                <br />
-                macOS, Windows, or Linux.
+                {host
+                  ? `Select a simulator from ${host.name}, or create one with an installed iOS runtime.`
+                  : 'Start sharing in Sim Relay on the Mac with Xcode. Then choose it in the sidebar or enter its address.'}
               </p>
               <div>
                 <button
                   className="button primary"
+                  disabled={!!busy}
                   onClick={() => {
                     setPairUrl('');
-                    setModal('pair');
+                    setModal(host ? 'create' : 'pair');
                   }}
                 >
                   <Plus size={16} />
-                  Connect a Mac
+                  {host ? 'Create simulator' : 'Connect a Mac'}
                 </button>
-                <button className="button secondary" onClick={explore}>
-                  Explore demo <ArrowRight size={15} />
-                </button>
+                {!host && (
+                  <button className="button secondary" onClick={explore}>
+                    Explore preview
+                  </button>
+                )}
               </div>
-              <div className="welcome-features">
-                <span>
-                  <Wifi size={15} />
-                  Local network
-                </span>
-                <span>
-                  <Cable size={15} />
-                  Direct connection
-                </span>
-                <span>
-                  <ShieldCheck size={15} />
-                  Private by design
-                </span>
-              </div>
+              <button className="text-button" onClick={() => setModal('help')}>
+                Setup and connection help
+              </button>
             </section>
           )}
-          <footer className="page-footer">
-            <span>Built for the way you build.</span>
-            <span>
-              <Code2 size={13} />
-              macOS · Windows · Linux
-            </span>
-          </footer>
         </div>
       </main>
       {busy && (
         <div className="working-toast" role="status">
-          <Busy text={busy} />
+          <Busy text={busy + '…'} />
         </div>
       )}
       {toast && (
@@ -1023,6 +1071,16 @@ export function App() {
           <Check size={16} />
           {toast}
         </div>
+      )}
+      {modal === 'diagnostics' && (
+        <DiagnosticsModal
+          api={api}
+          host={host}
+          stream={stream}
+          fps={fps}
+          failureStage={failure?.stage}
+          onClose={closeModal}
+        />
       )}
       {modal === 'pair' && (
         <PairModal
@@ -1044,6 +1102,7 @@ export function App() {
       {modal === 'create' && (
         <CreateModal
           inventory={inventory}
+          hostName={host?.name}
           onClose={closeModal}
           onCreate={async (data) => {
             if (!host) throw new Error('Connect to a Mac first.');
@@ -1077,8 +1136,8 @@ export function App() {
       {modal === 'host' && <HostModal api={api} onClose={closeModal} />}
       {modal === 'help' && (
         <Modal
-          title="Your Mac, within reach."
-          subtitle="One host Mac. Any desktop computer."
+          title="Setup and input help"
+          subtitle="Connect a host, then use its simulator display."
           onClose={closeModal}
         >
           <div className="help-steps">
@@ -1087,8 +1146,8 @@ export function App() {
               <section>
                 <h3>Start a host on your Mac</h3>
                 <p>
-                  Install Xcode and idb_companion, then use “Set up a Mac host” in the Mac app, or
-                  run <code>npm run host</code>.
+                  Install Xcode and idb_companion, then choose “Share this Mac” in the Mac app, or
+                  run <code>sim-relay-host</code>.
                 </p>
               </section>
             </div>
@@ -1098,14 +1157,14 @@ export function App() {
                 <h3>Connect from your computer</h3>
                 <p>
                   Choose a nearby Mac or enter its address. Compare its certificate fingerprint,
-                  then enter its pairing token.
+                  then enter its pairing code.
                 </p>
               </section>
             </div>
             <div>
               <span>3</span>
               <section>
-                <h3>Pick a simulator and build</h3>
+                <h3>Open a simulator display</h3>
                 <p>
                   Create an iPhone or iPad with an installed iOS runtime. Click “Start & connect” to
                   stream and interact.
@@ -1117,8 +1176,10 @@ export function App() {
             <strong>Input in this version</strong>
             <p>
               Touch, drag, long press, keyboard, pinch, rotation, shake, and hardware buttons. Use
-              Alt + drag or Ctrl + scroll to pinch. Arbitrary multi-finger paths, audio, and full
-              Mac desktop control are not implemented yet.
+              Alt + drag or Ctrl + scroll to pinch. Two touchscreen contacts perform a pinch on
+              lift. Continuous pinch, twist, and arbitrary multi-finger paths are unavailable. Click
+              the display to type. Ctrl+K or Cmd+K opens simctl commands; / focuses search. Escape
+              exits expanded view.
             </p>
           </div>
           <p className="modal-note">

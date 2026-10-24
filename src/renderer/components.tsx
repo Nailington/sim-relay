@@ -39,21 +39,29 @@ export function Modal({
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement;
-    const elements = () => [
-      ...ref.current!.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), input, textarea, select, [tabindex="0"]',
-      ),
-    ];
+    const elements = () =>
+      [
+        ...ref.current!.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [tabindex="0"]',
+        ),
+      ].filter((el) => el.getClientRects().length > 0);
     const timer = setTimeout(() => {
       (elements().find((el) => el.tagName === 'INPUT') ?? elements()[0])?.focus();
     }, 20);
     const key = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
       if (e.key === 'Tab') {
         const els = elements();
         const first = els[0],
           last = els.at(-1);
-        if (e.shiftKey && document.activeElement === first) {
+        if (!ref.current?.contains(document.activeElement)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first)?.focus();
+        } else if (e.shiftKey && document.activeElement === first) {
           e.preventDefault();
           last?.focus();
         } else if (!e.shiftKey && document.activeElement === last) {
@@ -82,11 +90,13 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
+        aria-describedby={subtitle ? 'modal-subtitle' : undefined}
+        tabIndex={-1}
       >
         <div className="modal-head">
           <div>
             <h2 id="modal-title">{title}</h2>
-            {subtitle && <p>{subtitle}</p>}
+            {subtitle && <p id="modal-subtitle">{subtitle}</p>}
           </div>
           <IconButton label="Close dialog" onClick={onClose}>
             <X size={18} />
