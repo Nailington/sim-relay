@@ -49,6 +49,7 @@ export interface RecordingDownload {
 export type MediaAction =
   'recording-start' | 'recording-stop' | 'recording-discard' | 'audio-start' | 'audio-stop';
 export type MediaNotice =
+  | { type: 'quality-state'; limits: QualityLimits }
   | { type: 'media-capabilities'; capabilities: MediaCapabilities }
   | { type: 'media-result'; id: string; result?: RecordingDownload; error?: string }
   | { type: 'recording'; recording: RecordingStatus }
