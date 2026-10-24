@@ -2,6 +2,7 @@
 const { app, BrowserWindow, dialog } = require('electron');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs/promises');
 app.setPath('userData', process.env.SIM_RELAY_SMOKE_USER_DATA);
 require(path.resolve('dist-electron/main.cjs'));
 const wait = async (check) => {
@@ -14,6 +15,19 @@ const wait = async (check) => {
 const js = (w, expression) => w.webContents.executeJavaScript(expression);
 const ready = (w) =>
   wait(async () => !w.webContents.isLoading() && (await js(w, '!!window.relay')));
+const snapshot = async (owner, name) => {
+  if (!process.env.SIM_RELAY_SMOKE_ARTIFACT_DIR) return;
+  await fs.mkdir(process.env.SIM_RELAY_SMOKE_ARTIFACT_DIR, { recursive: true });
+  await js(
+    owner,
+    'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+  );
+  const image = await owner.webContents.capturePage();
+  await fs.writeFile(
+    path.join(process.env.SIM_RELAY_SMOKE_ARTIFACT_DIR, `${name}.png`),
+    image.toPNG(),
+  );
+};
 const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-123456789ABC'];
 (async () => {
   await app.whenReady();
@@ -47,6 +61,19 @@ const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-12
     `window.relay.setQuality({mode:'manual',maxFps:10,maxScale:0.5,quality:0.6,maxKbps:5000})`,
   );
   await js(a, 'window.relay.stopAudio()');
+  a.setSize(680, 900);
+  await wait(() => js(a, 'innerWidth===680'));
+  await js(
+    a,
+    `[...document.querySelectorAll('.display-menu')].find(d=>d.querySelector('summary').textContent==='Media').open=true`,
+  );
+  await snapshot(a, 'popout-media-680x900');
+  a.setSize(360, 680);
+  await wait(() => js(a, 'innerWidth===360'));
+  assert.equal(await js(a, 'document.documentElement.scrollWidth <= innerWidth'), true);
+  await snapshot(a, 'popout-media-360x680');
+  await js(a, `document.querySelector('.display-menu[open]').open=false`);
+  a.setSize(680, 900);
   await js(main, `window.relay.connect(${hostId},${JSON.stringify(ids[1])},15)`);
   await wait(() => js(main, `window.nativeNotices.filter(n=>n.type==='metadata').length>=2`));
   await js(main, `window.relay.popOut(${hostId},${JSON.stringify(ids[1])},15)`);
@@ -102,6 +129,9 @@ const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-12
   assert.equal(BrowserWindow.getAllWindows().length, 3);
   await wait(() => js(main, `document.body.innerText.includes('Native A')`));
   await js(main, `window.relay.input({type:'button',button:'VOLUME_UP'})`);
+  main.setSize(1280, 800);
+  await wait(() => js(main, 'innerWidth===1280'));
+  await snapshot(main, 'workspace-1280x800');
   b.close();
   assert.equal(main.isDestroyed(), false);
   await js(main, `window.relay.popOut(${hostId},${JSON.stringify(ids[0])},30)`);
