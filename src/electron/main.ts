@@ -564,11 +564,17 @@ async function main() {
     async (owner: BrowserWindow) => {
       const context = displays.get(owner.id);
       if (!context) return;
-      const reopenWorkspace = window.isDestroyed();
+      let reopenWorkspace = window.isDestroyed();
       if (reopenWorkspace) window = createWindow();
       const workspaceSession = sessions.get(window.id);
       const previous = workspaceSession?.active ? workspaceSession.target : undefined;
       if (previous) await detach(window, selectionFor(workspaceSession)!);
+      // The OS may close either window while the detached renderer is loading.
+      if (owner.isDestroyed()) return;
+      if (window.isDestroyed()) {
+        window = createWindow();
+        reopenWorkspace = true;
+      }
       sessions.delete(window.id);
       const session = sessions.get(owner.id);
       context.sessionActive = !!session?.active;

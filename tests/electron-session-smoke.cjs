@@ -206,6 +206,41 @@ const ids = [
     [...ids].sort(),
     'each simulator has exactly one surviving owner',
   );
+  let closingSource;
+  for (const owner of BrowserWindow.getAllWindows()) {
+    const context = await js(owner, 'window.relay.displayContext()');
+    if (context?.device.udid === ids[2]) closingSource = owner;
+  }
+  assert.ok(closingSource, 'C is detached while another simulator occupies the workspace');
+  await js(closingSource, 'window.relay.startRecording()');
+  let finishLoad, loadingStarted;
+  const loadGate = new Promise((resolve) => {
+    finishLoad = resolve;
+  });
+  const loadStarted = new Promise((resolve) => {
+    loadingStarted = resolve;
+  });
+  BrowserWindow.prototype.loadFile = async function (...args) {
+    loadingStarted();
+    await loadGate;
+    return originalLoadFile.apply(this, args);
+  };
+  await js(closingSource, 'void window.relay.returnDisplay();true');
+  await loadStarted;
+  reopened.close();
+  await wait(() => reopened.isDestroyed());
+  finishLoad();
+  await wait(() => closingSource.isDestroyed());
+  BrowserWindow.prototype.loadFile = originalLoadFile;
+  const recreated = BrowserWindow.getAllWindows().find(
+    (owner) => !owner.webContents.getURL().includes('display=1'),
+  );
+  assert.ok(recreated, 'return recreates a workspace closed during detach');
+  await ready(recreated);
+  await wait(() => js(recreated, `document.body.innerText.includes('Native C')`));
+  await js(recreated, `window.relay.connect(${hostId},${JSON.stringify(ids[2])},30)`);
+  await js(recreated, 'window.relay.stopRecording()');
+  await js(recreated, 'window.relay.discardRecording()');
   console.log(
     'NATIVE_SESSION_SMOKE_OK: main/preload, two windows, transfer, independent input, duplicate focus, inactive reservation, per-window dialogs',
   );

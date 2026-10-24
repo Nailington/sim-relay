@@ -172,6 +172,13 @@ try {
       `concurrent returns retain independently controllable ${ids[i][0]}`,
     );
   }
+  assert.equal(
+    captures.get(ids[2])!.starts,
+    1,
+    'returning C retains its capture if the workspace closes',
+  );
+  assert.equal(captures.get(ids[2])!.stops, 1);
+  assert.equal(captures.get(ids[2])!.closes, 1);
   assert.equal(audioStarts, 1);
   assert.equal(audioCloses, 1);
   assert.ok(qualities.get(ids[0])!.includes(10));
