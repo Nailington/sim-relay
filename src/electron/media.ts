@@ -150,6 +150,17 @@ export class ClientMedia {
     this.socket.send(JSON.stringify(value));
   }
   command(action: MediaAction, hostAudioConsent?: boolean): Promise<RecordingDownload | undefined> {
+    const capabilities = this.notices.get('media-capabilities');
+    if (capabilities?.type !== 'media-capabilities')
+      return Promise.reject(new Error('This host has not advertised media support.'));
+    if (action === 'recording-start' && !capabilities.capabilities.recording)
+      return Promise.reject(new Error('Screen recording is unavailable on this host.'));
+    if (action === 'audio-start' && !capabilities.capabilities.audio)
+      return Promise.reject(
+        new Error(
+          capabilities.capabilities.audioReason ?? 'Mac audio is unavailable on this host.',
+        ),
+      );
     const id = randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -174,9 +185,16 @@ export class ClientMedia {
     });
   }
   quality(limits: QualityLimits) {
+    if (!this.adaptive()) throw new Error('This host does not support adaptive stream quality.');
     this.write({ type: 'quality', limits: qualitySchema.parse(limits) });
   }
+  private adaptive() {
+    const notice = this.notices.get('media-capabilities');
+    return notice?.type === 'media-capabilities' && notice.capabilities.adaptive === true;
+  }
   feedback(feedback: VideoFeedback) {
+    // Protocol-1 hosts reject unknown control messages and must receive no media telemetry.
+    if (!this.adaptive()) return;
     const checked = feedbackSchema.parse(feedback);
     this.write({
       type: 'video-feedback',

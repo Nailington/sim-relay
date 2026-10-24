@@ -27,6 +27,9 @@ import type {
 
 let window: BrowserWindow;
 let workspaceContext: DisplayContext | undefined;
+// Window loading yields to other IPC calls. Serialize ownership changes through completion.
+let ownershipTail: Promise<unknown> = Promise.resolve();
+const canceledSelections = new Map<number, number>();
 let discovery: Bonjour | undefined;
 const windows = new Map<number, BrowserWindow>();
 const displays = new Map<number, DisplayContext>();
@@ -86,6 +89,7 @@ async function saveProfiles() {
   }
 }
 function disconnect(owner: BrowserWindow) {
+  canceledSelections.set(owner.id, (canceledSelections.get(owner.id) ?? 0) + 1);
   const session = sessions.get(owner.id);
   session?.disconnect();
   return session ? (mediaBySession.get(session)?.close() ?? Promise.resolve()) : Promise.resolve();
@@ -102,7 +106,23 @@ function handle(channel: string, fn: (...args: any[]) => unknown, withWindow = f
         ? args[0]
         : undefined;
     try {
-      const result = await (withWindow ? fn(owner, ...args) : fn(...args));
+      const generation = canceledSelections.get(owner.id) ?? 0;
+      const invoke = () => {
+        if (owner.isDestroyed() || !windows.has(owner.id))
+          throw new Error('This display was closed.');
+        if (
+          ['connect', 'retry'].includes(channel) &&
+          generation !== (canceledSelections.get(owner.id) ?? 0)
+        )
+          throw new Error('Connection canceled.');
+        return withWindow ? fn(owner, ...args) : fn(...args);
+      };
+      let result: unknown;
+      if (['connect', 'retry', 'pop-out', 'return-display'].includes(channel)) {
+        const operation = ownershipTail.then(invoke);
+        ownershipTail = operation.catch(() => {});
+        result = await operation;
+      } else result = await invoke();
       if (stage) diagnostics.record(stage, 'passed', hostId);
       return result;
     } catch (error) {

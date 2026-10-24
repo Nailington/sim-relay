@@ -28,7 +28,11 @@ const snapshot = async (owner, name) => {
     image.toPNG(),
   );
 };
-const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-123456789ABC'];
+const ids = [
+  'A1234567-1234-4123-8123-123456789ABC',
+  'B1234567-1234-4123-8123-123456789ABC',
+  'C1234567-1234-4123-8123-123456789ABC',
+];
 (async () => {
   await app.whenReady();
   await wait(() => BrowserWindow.getAllWindows().length === 1);
@@ -153,6 +157,43 @@ const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-12
   assert.ok(reopened);
   await ready(reopened);
   await wait(() => js(reopened, `document.body.innerText.includes('Native A')`));
+  // Two returns race while a third active workspace session is detached asynchronously.
+  await js(reopened, `window.relay.popOut(${hostId},${JSON.stringify(ids[0])},30)`);
+  const concurrentA = BrowserWindow.getAllWindows().find((w) => w.getTitle().includes('Native A'));
+  const concurrentB = BrowserWindow.getAllWindows().find((w) => w.getTitle().includes('Native B'));
+  assert.ok(concurrentA && concurrentB);
+  await ready(concurrentA);
+  await wait(() => js(concurrentA, `document.body.innerText.includes('Live')`));
+  await js(reopened, `window.relay.connect(${hostId},${JSON.stringify(ids[2])},30)`);
+  await js(
+    reopened,
+    `window.concurrentLive=false;window.relay.onNotice(n=>{if(n.type==='metadata')window.concurrentLive=true});true`,
+  );
+  await js(reopened, `window.relay.connect(${hostId},${JSON.stringify(ids[2])},30)`);
+  await wait(() => js(reopened, 'window.concurrentLive'));
+  const originalLoadFile = BrowserWindow.prototype.loadFile;
+  BrowserWindow.prototype.loadFile = async function (...args) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    return originalLoadFile.apply(this, args);
+  };
+  await Promise.all(
+    [concurrentA, concurrentB].map((owner) => js(owner, 'void window.relay.returnDisplay();true')),
+  );
+  await wait(() => concurrentA.isDestroyed() && concurrentB.isDestroyed());
+  BrowserWindow.prototype.loadFile = originalLoadFile;
+  assert.equal(BrowserWindow.getAllWindows().length, 3);
+  for (const owner of BrowserWindow.getAllWindows()) {
+    await ready(owner);
+    const context = await js(owner, 'window.relay.displayContext()');
+    const id = context?.device.udid ?? ids[1];
+    // Reannounce verifies ownership and host lease without creating a replacement transport.
+    await js(owner, `window.relay.connect(${hostId},${JSON.stringify(id)},30)`);
+    const index = ids.indexOf(id);
+    await js(
+      owner,
+      `window.relay.input({type:'key',code:${40}+${index},phase:'down'});window.relay.input({type:'key',code:${40}+${index},phase:'up'})`,
+    );
+  }
   console.log(
     'NATIVE_SESSION_SMOKE_OK: main/preload, two windows, transfer, independent input, duplicate focus, inactive reservation, per-window dialogs',
   );
