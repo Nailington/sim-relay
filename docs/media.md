@@ -282,10 +282,13 @@ Dynamic Type and Reduce Motion; actual VoiceOver/large-text runtime checks remai
 
 ## Validation still required before closing issues
 
-Combined-stack automation: `npm test` (78 tests), `npm run check`, `npm run build`, and real
+Combined-stack automation: `npm test` (86 tests), `npm run check`, `npm run build`, and real
 headless Electron main/preload/renderer smoke. The latter verifies two pop-outs, retained recording
 across transfers, sender-window media/quality routing, late capture-state replay, and native dialog
-parenting with picker results stubbed. It does not exercise a real OS picker or real audio playback.
+parenting with picker results stubbed. A delayed-window-loading case returns two pop-outs
+concurrently while retaining a third active workspace session. Legacy hosts receive no telemetry
+until media support is advertised. Pinned TLS/WSS regressions also cover mid-download revocation
+and recording expiry/encoder exits without stale ownership. It does not exercise a real OS picker or real audio playback.
 The standalone media suite and synthetic benchmark also remain reproducible.
 Coverage includes quality bounds/recovery/decode feedback, split/hostile PCM framing, local audio
 opt-in/single-owner/startup races, recording idempotency/startup cancellation/finalization/discard,
