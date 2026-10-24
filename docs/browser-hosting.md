@@ -126,6 +126,15 @@ out retains the saved setup for the next sign-in. Reset removes this user's setu
 browser; it does not affect other profiles/devices or revoke the credential on the Mac.
 Revoke access on the Mac when disposing of an old browser profile.
 
+Sign-in changes invalidate workspaces and API instances opened under the previous account,
+including sibling tabs sharing the same cookie. Each action identifies the workspace account;
+the hosting service checks that identity against the current sign-in before forwarding Mac
+credentials. An older page must reload after the hosted service is upgraded.
+
+Logout, cookie expiry, and replacing the sign-in cancel that session's pending HTTP actions,
+streams, and recording downloads. Authorization is checked again after asynchronous request
+preparation. A command already dispatched to the Mac cannot be undone by signing out.
+
 Storage is not synchronized between devices or browsers. Clearing site data, using a
 private session, browser eviction, or switching the deployment's origin can remove or
 separate the saved setup. Other users never receive a global server-side host list.
