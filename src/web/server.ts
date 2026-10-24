@@ -14,6 +14,9 @@ import {
 } from '../electron/remote';
 import { inputSchema } from '../host/protocol';
 import type { Profile, Probe } from '../shared/types';
+import { RecordingDownloads } from './recording-download';
+import { mediaControlSchema } from './media-control';
+import { terminalFailure } from '../electron/session';
 
 const profileSchema = z.object({
   id: z.string().uuid(),
@@ -93,6 +96,7 @@ export async function startWeb(options: WebOptions) {
   const sessions = new Map<string, { user: string; expires: number }>();
   const loginAttempts = new Map<string, { count: number; start: number }>();
   const browserSockets = new Map<WebSocket, string>();
+  const downloads = new RecordingDownloads();
   const relays = new Set<() => void>();
   let origin = options.publicOrigin ? new URL(options.publicOrigin).origin : '';
   if (
@@ -111,7 +115,10 @@ export async function startWeb(options: WebOptions) {
     const id = cookie(request),
       value = id && sessions.get(id);
     if (!value || value.expires < Date.now()) {
-      if (id) sessions.delete(id);
+      if (id) {
+        sessions.delete(id);
+        downloads.revoke(id);
+      }
       return;
     }
     return { ...value, id: id! };
@@ -170,10 +177,20 @@ export async function startWeb(options: WebOptions) {
       if (pathname.startsWith('/api/')) {
         if (!current)
           return json(response, 401, { error: 'Sign in to this hosting service again.' });
+        if (pathname.startsWith('/api/download/') && request.method === 'GET') {
+          if (
+            !(await downloads.serve(pathname.slice('/api/download/'.length), current.id, response))
+          )
+            return json(response, 404, {
+              error: 'This download expired. Keep the display connected and choose Save again.',
+            });
+          return;
+        }
         if (request.method !== 'POST')
           return json(response, 405, { error: 'Use POST for this action.' });
         if (pathname === '/api/logout') {
           sessions.delete(current.id);
+          downloads.revoke(current.id);
           for (const [socket, id] of browserSockets) if (id === current.id) socket.terminate();
           response.setHeader(
             'Set-Cookie',
@@ -196,6 +213,12 @@ export async function startWeb(options: WebOptions) {
           return json(response, 200, { ok: true });
         }
         const data = JSON.parse((await body(request)).toString());
+        if (pathname === '/api/recording-download')
+          return json(
+            response,
+            200,
+            downloads.issue(current.id, getProfile(data.profile), data.recording, current.expires),
+          );
         if (pathname === '/api/probe')
           return json(response, 200, await probeHost(checkHost(z.string().parse(data.url))));
         if (pathname === '/api/pair') {
@@ -257,6 +280,10 @@ export async function startWeb(options: WebOptions) {
       });
       response.end(content);
     } catch (error) {
+      if (response.headersSent) {
+        response.destroy();
+        return;
+      }
       // Host errors can contain user paths/credentials. The browser receives a safe next step.
       json(response, 400, {
         error: safeError(error),
@@ -334,16 +361,16 @@ export async function startWeb(options: WebOptions) {
               if (isBinary && browser.bufferedAmount > 2 * 1024 * 1024) return;
               browser.send(frame, { binary: isBinary });
             });
-            remote.on('error', () => {
+            remote.on('error', (error) => {
               if (browser.readyState === WebSocket.OPEN)
                 browser.send(
                   JSON.stringify({
                     type: 'error',
-                    message:
-                      'Cannot stream from the paired Mac. Check its service and pairing, then reconnect.',
+                    message: safeError(error),
+                    terminal: terminalFailure(error),
                   }),
                 );
-              close();
+              browser.close(terminalFailure(error) ? 4003 : 1011);
             });
             remote.once('close', (code) => {
               if (browser.readyState === WebSocket.OPEN) browser.close(code === 4003 ? 4003 : 1000);
@@ -351,10 +378,26 @@ export async function startWeb(options: WebOptions) {
             });
             return;
           }
-          if (remote?.readyState === WebSocket.OPEN)
-            remote.send(JSON.stringify(inputSchema.parse(data)));
-        } catch {
-          close();
+          if (remote?.readyState === WebSocket.OPEN) {
+            if (remote.bufferedAmount > 64 * 1024) {
+              close();
+              return;
+            }
+            remote.send(
+              JSON.stringify(
+                ['quality', 'video-feedback', 'media-pong', 'media-control'].includes(data?.type)
+                  ? mediaControlSchema.parse(data)
+                  : inputSchema.parse(data),
+              ),
+            );
+          }
+        } catch (error) {
+          if (browser.readyState === WebSocket.OPEN) {
+            browser.send(
+              JSON.stringify({ type: 'error', message: safeError(error), terminal: true }),
+            );
+            browser.close(4003);
+          } else close();
         }
       });
     });
@@ -372,6 +415,7 @@ export async function startWeb(options: WebOptions) {
     server,
     origin,
     async close() {
+      downloads.revoke();
       for (const close of relays) close();
       wss.close();
       await new Promise<void>((resolve) => {

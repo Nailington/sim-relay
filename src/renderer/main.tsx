@@ -8,7 +8,13 @@ import './display.css';
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     {window.relay ? (
-      new URLSearchParams(location.search).has('display') ? <DisplayWindow /> : <App />
-    ) : <BrowserGate />}
+      new URLSearchParams(location.search).has('display') ? (
+        <DisplayWindow />
+      ) : (
+        <App />
+      )
+    ) : (
+      <BrowserGate />
+    )}
   </React.StrictMode>,
 );

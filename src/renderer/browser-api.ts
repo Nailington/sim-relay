@@ -1,12 +1,18 @@
-import type {
-  DesktopApi,
-  Profile,
-  Probe,
-  HostEntry,
-  InputEvent,
-  StreamNotice,
-} from '../shared/types';
+import type { DesktopApi, Profile, Probe, HostEntry, StreamNotice } from '../shared/types';
+import { browserSession } from './browser-session';
+import { browserDisplays } from './browser-displays';
+import { browserRecording } from './browser-recording';
+import { createDiagnostics } from '../electron/diagnostics';
+import { serializeReport } from '../shared/diagnostics';
+import metadata from '../../package.json';
 
+const lifetimes = new WeakMap<DesktopApi, () => void>();
+export function disposeBrowserApi(api?: DesktopApi) {
+  if (api) {
+    lifetimes.get(api)?.();
+    lifetimes.delete(api);
+  }
+}
 export const browserStorageKey = (user: string) => `sim-relay.web.v1.${encodeURIComponent(user)}`;
 async function storageMutation<T>(key: string, action: () => T): Promise<T> {
   if (navigator.locks) return navigator.locks.request(key, action);
@@ -50,6 +56,7 @@ function download(data: Blob, filename: string) {
 
 /** One transport per tab; saved profiles are local to this signed-in user and browser. */
 export function createBrowserApi(user: string): DesktopApi {
+  const lifetime = new AbortController();
   const key = browserStorageKey(user);
   const readProfiles = (): Profile[] => {
     try {
@@ -84,22 +91,25 @@ export function createBrowserApi(user: string): DesktopApi {
     if (!value) throw new Error('Pair with this Mac in this browser first.');
     return value;
   };
-  let socket: WebSocket | undefined,
-    generation = 0;
-  let connectedProfile: Profile | undefined;
-  const frames = new Set<(frame: Uint8Array) => void>();
   const notices = new Set<(notice: StreamNotice) => void>();
   const notify = (notice: StreamNotice) => {
     for (const listener of notices) listener(notice);
   };
+  const transport = browserSession(get, notify);
+  const { session, media } = transport;
   const disconnect = async () => {
-    generation++;
-    const old = socket;
-    socket = undefined;
-    connectedProfile = undefined;
-    old?.close();
-    notify({ type: 'closed' });
+    session.disconnect();
   };
+  const saveRecording = browserRecording(media, transport.profile, (profile, recording) =>
+    webCall('recording-download', { profile, recording }),
+  );
+  const diagnostics = createDiagnostics({
+    version: metadata.version,
+    platform: 'browser',
+    profile: get,
+    probe: (url) => webCall<Probe>('probe', { url }),
+    inventory: (profile) => webCall('request', { profile, method: 'GET', path: '/devices' }),
+  });
   const requestBlob = async (id: string, path: string) => {
     const response = await fetch('/api/request', {
       method: 'POST',
@@ -159,82 +169,69 @@ export function createBrowserApi(user: string): DesktopApi {
       return publicProfile(paired);
     },
     forget: async (id) => {
-      if (connectedProfile?.id === id) await disconnect();
+      if (session.target?.hostId === id) await disconnect();
       await storageMutation(key, () => save(readProfiles().filter((profile) => profile.id !== id)));
     },
     request: (id, method, path, body) =>
       webCall('request', { profile: get(id), method, path, body }),
-    connect: async (id, udid, fps) => {
-      await disconnect();
-      connectedProfile = get(id);
-      const attempt = ++generation;
-      const url = new URL('/api/stream', location.href);
-      url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const current = new WebSocket(url);
-      current.binaryType = 'arraybuffer';
-      socket = current;
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          current.close();
-          reject(new Error('The Mac did not start streaming. Check its connection and retry.'));
-        }, 20_000);
-        let started = false;
-        current.onopen = () =>
-          current.send(JSON.stringify({ profile: connectedProfile, udid, fps }));
-        current.onmessage = (event) => {
-          if (generation !== attempt || socket !== current) return;
-          if (typeof event.data !== 'string') {
-            for (const callback of frames) callback(new Uint8Array(event.data));
-            return;
-          }
-          try {
-            const notice: StreamNotice = JSON.parse(event.data);
-            notify(notice);
-            if (notice.type === 'metadata') {
-              started = true;
-              clearTimeout(timer);
-              resolve();
-            }
-            if (notice.type === 'error' && !started) {
-              clearTimeout(timer);
-              reject(new Error(notice.message));
-            }
-          } catch {
-            current.close();
-          }
-        };
-        current.onerror = () => {
-          clearTimeout(timer);
-          if (!started)
-            reject(
-              new Error('Cannot reach the hosting service. Check its connection or sign in again.'),
-            );
-        };
-        current.onclose = () => {
-          clearTimeout(timer);
-          if (!started)
-            reject(
-              new Error(
-                'Display connection closed. Check pairing and simulator state, then retry.',
-              ),
-            );
-          if (socket === current) {
-            socket = undefined;
-            connectedProfile = undefined;
-            notify({ type: 'closed' });
-          }
-        };
-      });
-    },
+    connect: (id, udid, fps) => session.connect({ hostId: id, udid, fps }),
     disconnect,
-    input: (event: InputEvent) => {
-      if (socket?.readyState === WebSocket.OPEN && socket.bufferedAmount < 64 * 1024)
-        socket.send(JSON.stringify(event));
-    },
+    retry: () => session.retry(),
+    input: (event) => session.input(event),
     onFrame: (callback) => {
-      frames.add(callback);
-      return () => frames.delete(callback);
+      media.frames.add(callback);
+      return () => {
+        media.frames.delete(callback);
+      };
     },
+    setQuality: async (limits) => media.quality(limits),
+    reportVideoFeedback: (feedback) => {
+      if (session.active)
+        try {
+          media.feedback(feedback);
+        } catch {
+          /* A closing transport skips feedback. */
+        }
+    },
+    startRecording: async () => {
+      await media.command('recording-start');
+    },
+    stopRecording: async () => {
+      await media.command('recording-stop');
+    },
+    discardRecording: async () => {
+      await media.command('recording-discard');
+    },
+    saveRecording,
+    startAudio: async (consent) => {
+      await media.command('audio-start', consent);
+    },
+    stopAudio: async () => {
+      await media.command('audio-stop');
+    },
+    onAudio: (callback) => {
+      media.audio.add(callback);
+      return () => {
+        media.audio.delete(callback);
+      };
+    },
+    onMediaNotice: (callback) => media.subscribe(callback),
+    diagnostics: (id) =>
+      diagnostics
+        .refresh(id)
+        .then((report) => ({ ...report, client: { ...report.client, platform: 'browser' } })),
+    exportDiagnostics: async (report) => {
+      download(
+        new Blob([serializeReport(report)], { type: 'application/json' }),
+        `Sim-Relay-diagnostics-${Date.now()}.json`,
+      );
+      return true;
+    },
+    ...browserDisplays(
+      () => api,
+      () => session.active,
+      lifetime.signal,
+    ),
     onNotice: (callback) => {
       notices.add(callback);
       return () => notices.delete(callback);
@@ -280,28 +277,40 @@ export function createBrowserApi(user: string): DesktopApi {
       return true;
     },
   };
+  lifetimes.set(api, () => {
+    session.disconnect();
+    lifetime.abort();
+  });
   const release = () => {
     // Current hosts support release; older hosts receive the explicit UP events from DeviceStage.
     if (document.visibilityState === 'hidden') void disconnect();
   };
-  document.addEventListener('visibilitychange', release);
-  window.addEventListener('storage', (event) => {
-    if (event.key !== null && event.key !== key) return;
-    if (!connectedProfile) return;
-    const current = readProfiles().find((entry) => entry.id === connectedProfile!.id);
-    if (
-      !current ||
-      current.token !== connectedProfile.token ||
-      current.fingerprint !== connectedProfile.fingerprint
-    ) {
-      void disconnect();
-      notify({
-        type: 'error',
-        message:
-          'This browser’s saved pairing changed in another tab. Select a saved Mac or pair again.',
-      });
-    }
+  document.addEventListener('visibilitychange', release, { signal: lifetime.signal });
+  window.addEventListener(
+    'storage',
+    (event) => {
+      if (event.key !== null && event.key !== key) return;
+      const connectedProfile = transport.profile();
+      if (!connectedProfile) return;
+      const current = readProfiles().find((entry) => entry.id === connectedProfile.id);
+      if (
+        !current ||
+        current.token !== connectedProfile.token ||
+        current.fingerprint !== connectedProfile.fingerprint
+      ) {
+        void disconnect();
+        notify({
+          type: 'error',
+          message:
+            'This browser’s saved pairing changed in another tab. Select a saved Mac or pair again.',
+        });
+      }
+    },
+    { signal: lifetime.signal },
+  );
+  window.addEventListener('pagehide', () => disposeBrowserApi(api), {
+    once: true,
+    signal: lifetime.signal,
   });
-  window.addEventListener('pagehide', () => void disconnect(), { once: true });
   return api;
 }

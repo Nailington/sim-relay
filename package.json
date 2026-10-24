@@ -17,6 +17,7 @@
     "check": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.*",
     "test:browser-renderer": "vite build && node --import tsx tests/browser-renderer-smoke.ts",
+    "test:browser": "vite build && node --import tsx tests/browser-renderer-smoke.ts && node --import tsx tests/browser-workspace-smoke.ts",
     "test:sessions": "node --import tsx --test tests/session-architecture.test.ts tests/display-coordinates.test.ts tests/session-host.test.ts",
     "test:sessions:native": "npm run build && node --import tsx tests/native-session-smoke.ts",
     "package": "npm run build && electron-builder",

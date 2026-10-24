@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { App } from './App';
-import { clearBrowserWorkspace, createBrowserApi, webCall } from './browser-api';
+import { DisplayWindow } from './DisplayWindow';
+import { clearBrowserWorkspace, createBrowserApi, disposeBrowserApi, webCall } from './browser-api';
 import './browser.css';
 
 export function BrowserGate() {
@@ -102,6 +103,7 @@ export function BrowserGate() {
               ?.disconnect()
               .then(() => webCall('logout'))
               .then(() => {
+                disposeBrowserApi(window.relay);
                 window.relay = undefined;
                 setMode('login');
               })
@@ -142,7 +144,7 @@ export function BrowserGate() {
         </div>
       )}
       <div className="browser-app">
-        <App />
+        {new URLSearchParams(location.search).has('display') ? <DisplayWindow /> : <App />}
       </div>
     </div>
   );

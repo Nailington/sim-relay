@@ -18,12 +18,47 @@ const inventory = (name) => ({
   devicetypes: [],
 });
 const notices = new Set();
+const returns = new Set();
+const mediaNotices = new Set();
 const calls = [];
 const pending = [];
+const pendingConnects = [];
 let target;
 window.hydrationFixture = {
   calls,
   pending,
+  pendingConnects,
+  manualQuality: () => {
+    for (const callback of mediaNotices)
+      callback({
+        type: 'quality-state',
+        limits: { mode: 'manual', maxFps: 15, maxScale: 0.5, quality: 0.6, maxKbps: 1000 },
+      });
+  },
+  advertiseAdaptive: () => {
+    for (const callback of mediaNotices)
+      callback({
+        type: 'media-capabilities',
+        capabilities: { adaptive: true, recording: true, audio: false, audioScope: 'host' },
+      });
+  },
+  returnA: () => {
+    for (const callback of returns)
+      callback({ host: hosts[0], device: inventory('A').devices[0], fps: 30, sessionActive: true });
+  },
+  failOldConnect: () => {
+    for (const reject of pendingConnects.splice(0))
+      reject(new Error('Obsolete returned display failed'));
+  },
+  returnB: () => {
+    for (const callback of returns)
+      callback({
+        host: hosts[1],
+        device: inventory('B').devices[0],
+        fps: 30,
+        sessionActive: false,
+      });
+  },
   release: (fail = false) => {
     for (const { resolve, reject } of pending.splice(0))
       fail ? reject(new Error('Late host A is offline')) : resolve(inventory('A'));
@@ -48,6 +83,7 @@ window.relay = {
   connect: async (id, udid, fps) => {
     target = { id, udid };
     calls.push({ action: 'connect', id, udid, fps });
+    if (id === 'host-A') return new Promise((_resolve, reject) => pendingConnects.push(reject));
     for (const callback of notices)
       callback({
         type: 'metadata',
@@ -56,6 +92,20 @@ window.relay = {
   },
   input: (event) => calls.push({ action: 'input', ...target, event }),
   onFrame: () => () => {},
+  onMediaNotice: (callback) => {
+    mediaNotices.add(callback);
+    return () => mediaNotices.delete(callback);
+  },
+  setQuality: async (limits) => {
+    calls.push({ action: 'quality', limits });
+  },
+  onAudio: () => () => {},
+  reportVideoFeedback: () => {},
+  displayContext: async () => undefined,
+  onReturnDisplay: (callback) => {
+    returns.add(callback);
+    return () => returns.delete(callback);
+  },
   onNotice: (callback) => {
     notices.add(callback);
     return () => notices.delete(callback);

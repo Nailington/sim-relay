@@ -88,6 +88,7 @@ export function App() {
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>({ phase: 'idle' });
   const [fps, setFps] = useState(0);
   const [targetFps, setTargetFps] = useState(30);
+  const [adaptive, setAdaptive] = useState(false);
   const [homeSignal, setHomeSignal] = useState(0);
   const [dark, setDark] = useState<boolean>();
   const [zoom, setZoom] = useState(false);
@@ -230,7 +231,8 @@ export function App() {
     const restore = (context: DisplayContext) => {
       const selection = ++selectionGeneration.current;
       const attempt = ++connectionAttempt.current;
-      const current = () => selectionGeneration.current === selection && connectionAttempt.current === attempt;
+      const current = () =>
+        selectionGeneration.current === selection && connectionAttempt.current === attempt;
       setDemo(false);
       setHost(context.host);
       currentHost.current = context.host.id;
@@ -245,11 +247,13 @@ export function App() {
         .then((value) => {
           if (current()) setInventory(value);
         })
-        .catch((e) => { if (current()) setError(e.message); });
+        .catch((e) => {
+          if (current()) setError(e.message);
+        });
       if (context.sessionActive)
-        void api
-          .connect(context.host.id, context.device.udid, context.fps)
-          .catch((e) => { if (current()) setError(e.message); });
+        void api.connect(context.host.id, context.device.udid, context.fps).catch((e) => {
+          if (current()) setError(e.message);
+        });
     };
     const off = api.onReturnDisplay(restore);
     void api
@@ -981,6 +985,7 @@ export function App() {
                         maxFps={targetFps}
                         onError={reportError}
                         onRecordingChange={setRecordingStatus}
+                        onAdaptiveChange={setAdaptive}
                       />
                     </details>
                   )}
@@ -991,7 +996,9 @@ export function App() {
                       <select
                         aria-label="Requested frame rate"
                         value={targetFps}
-                        disabled={!!busy || stream !== 'off'}
+                        disabled={
+                          !!busy || stream === 'connecting' || (stream === 'live' && adaptive)
+                        }
                         onChange={(e) => {
                           const rate = Number(e.target.value);
                           setTargetFps(rate);
@@ -1003,6 +1010,9 @@ export function App() {
                         <option value={60}>60 fps</option>
                       </select>
                     </label>
+                    {stream === 'live' && adaptive && (
+                      <p className="field-hint">Adjust live video in Recording, audio & quality.</p>
+                    )}
                     <div className="quality-note">
                       <span
                         className={

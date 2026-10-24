@@ -62,12 +62,26 @@ streams. The browser never disables TLS validation to talk directly to a self-si
 Pairing credentials pass through the hosting machine in memory, so its operator must be
 trusted. Never host third-party scripts at the same origin.
 
-Each tab has its own live stream and input routing. Two tabs/browsers can control different
-simulators; connecting to the same simulator reports the host's controlling-client conflict.
-Closing one tab or signing out closes only its connections. A simulator itself is shared
-state, not a clone per browser. Hidden tabs disconnect to release input; reconnect when
-returning to the tab. Host reboot, certificate changes, and deliberate simulator shutdown
-can require a manual reconnect or re-pairing.
+Each tab has its own live stream, retry lifecycle, media controls, and input routing.
+Two tabs/browsers can control different simulators; connecting to the same simulator reports
+the host's controlling-client conflict. Closing a tab releases its connection. Signing out
+closes connections that share that sign-in cookie; other browser profiles and independent
+sign-ins keep their streams. A simulator itself is shared state, not a clone per browser.
+Hidden tabs disconnect to release input; reconnect when returning to the tab.
+
+Network interruptions retry the original Mac and simulator with bounded backoff. Cancel
+retries or disconnect to stop them. Revoked credentials, certificate changes, incompatible
+protocols, conflicting controllers, and stopped/deleted simulators stop automatic retries.
+Verify the Mac and pair again when required; a retry never replaces a saved certificate pin.
+
+**Pop out display** opens a same-origin browser window. Allow pop-ups for this site if the
+browser blocks it. Browser sockets cannot move between windows: opening or returning a
+display disconnects its transport, stops audio, and discards unsaved recording data. Choose
+**Connect display** in the new window, or **Start & connect** after returning. Returning to
+a workspace that already has an active display asks you to disconnect that display first.
+Closing a display releases its transport and leaves the simulator running. **Shut down
+simulator** is a separate explicit action. Browser window controls and full-screen behavior
+remain subject to browser permissions.
 
 Screenshots download as PNGs, and installation uses the browser's ZIP file picker. URLs,
 text paste, location, appearance, simulator creation and finite simctl commands use the
@@ -75,6 +89,27 @@ same authenticated host routes as the desktop. Browser/OS-reserved keyboard shor
 clipboard permissions may differ. Use HTTPS (or loopback) for clipboard access. Mobile
 browsers may suspend background tabs; direct touch remains subject to the input service's
 documented gesture capabilities.
+
+Modern hosts advertise adaptive quality, silent MP4 recording, and optional host-wide PCM
+audio. The browser sends these controls and decode feedback only after capability
+negotiation. Legacy hosts retain ordinary JPEG display/input and live requested-FPS changes;
+changing their frame rate reconnects the display. Modern live quality controls adjust the
+stream without changing its connection target. Audio uses the same explicit consent and
+Mac-side opt-in as the desktop; disconnecting stops playback and capture.
+
+Recording downloads stream through the relay with backpressure and a validated byte limit.
+Browsers supporting File System Access stream directly into the selected file and discard
+the host copy after a completed save. Other browsers use their download manager: the UI says
+**Download started** and keeps the host copy available for retry or explicit discard. Keep
+the display connected until the browser confirms completion. No large recording Blob is
+assembled. Relay download links expire after 60 seconds, work once, and require the sign-in
+cookie that created them; logout revokes pending links and active transfers. Mac credentials
+and Mac download tickets stay out of URLs. HTTPS to the Mac still verifies its saved pin.
+
+Diagnostics checks the selected Mac using this browser's saved pairing. Review the exact
+report before downloading it. Strict schema validation excludes addresses, names,
+credentials, certificate material, commands, and raw logs; export saves exactly the reviewed
+JSON. A browser download start is not a claim that the file finished saving.
 
 ## Browser-local storage and reset
 
@@ -104,9 +139,19 @@ disallowed destinations, certificate-pin failure, and inaccessible state files. 
 simulator video/audio and physical touch-device/browser combinations still need native
 verification. Run `npm test` for the transport tests and `npm run web -- --help` for settings.
 
-`npm run test:browser-renderer` builds the actual React frontend and mounts it in headless
-Electron with a deferred fake API. It selects and connects Mac B while saved Mac A's
-inventory is pending, then resolves or rejects A's request. Assertions cover the visible
-host and simulator, live action routing, frame rate, and saved preferences. This checks
-renderer state transitions, not native simulator capture. On NixOS run from `nix develop`
-so Electron uses the Nix runtime; no Mac or simulator is required.
+`npm run test:browser` builds the actual React frontend and runs headless Electron checks.
+The renderer regression uses a deferred fake API: it selects/connects Mac B or restores a
+returned B display while saved Mac A's inventory is pending, then resolves or rejects A's
+requests and obsolete returned-display connection. Assertions cover visible selection,
+action routing, legacy/modern frame-rate controls, errors, and saved preferences.
+
+The browser integration smoke runs the built app in two isolated Chromium storage/cookie
+contexts against a local TLS host with a fake simulator backend. It verifies UI input and
+quality isolation, streamed recording download in both browser paths, one-use/cookie-bound
+links, logout invalidation, exact reviewed diagnostic export, popup blocking/return,
+persistence without auto-connect, revocation, retry cancellation, and reset propagation to
+an existing tab in the same browser context. Recording bytes and the File System Access
+sink are test fixtures; this does not verify native capture, a real OS file picker, or audio
+capture. On NixOS run from `nix develop` so Electron uses the Nix runtime; no Mac or simulator
+is required. Linux CI runs both browser checks and the separate native Electron fake-host
+session smoke.

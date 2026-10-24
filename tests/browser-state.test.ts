@@ -30,10 +30,11 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
   class FakeSocket {
     static OPEN = 1;
     readyState = 0;
+    bufferedAmount = 0;
     binaryType = '';
     onopen?: () => void;
     onmessage?: (event: { data: string }) => void;
-    onclose?: () => void;
+    onclose?: (event: { code: number }) => void;
     onerror?: () => void;
     constructor(_url: URL) {
       sockets.push(this);
@@ -44,7 +45,7 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
     }
     send(value: string) {
       if ('profile' in JSON.parse(value))
-        queueMicrotask(() =>
+        setTimeout(() =>
           this.onmessage?.({
             data: JSON.stringify({
               type: 'metadata',
@@ -55,7 +56,7 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
     }
     close() {
       this.readyState = 3;
-      queueMicrotask(() => this.onclose?.());
+      queueMicrotask(() => this.onclose?.({ code: 1000 }));
     }
   }
   const profile: Profile = {
@@ -86,6 +87,7 @@ test('reset is visible to existing tabs and pairing cannot resurrect their stale
       fetch: {
         configurable: true,
         value: async (_url: string, options: { body: string }) => {
+          if (_url === '/api/session') return new Response(JSON.stringify({ user: 'alice' }));
           const value = JSON.parse(options.body);
           return new Response(
             JSON.stringify({ ...value.profile, token: 'new-private-credential' }),

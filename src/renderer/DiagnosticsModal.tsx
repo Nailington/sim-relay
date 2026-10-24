@@ -249,7 +249,10 @@ export function DiagnosticsModal({
           </pre>
           {saved && (
             <p role="status" className="saved-report">
-              <Check size={16} /> Diagnostic report saved
+              <Check size={16} />{' '}
+              {api?.platform === 'web'
+                ? 'Diagnostic report download started'
+                : 'Diagnostic report saved'}
             </p>
           )}
         </>
