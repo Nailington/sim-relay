@@ -1,3 +1,4 @@
+import type { RecordingStatus } from '../shared/media';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
@@ -44,6 +45,7 @@ import type {
 } from '../shared/types';
 import { Busy, IconButton, Modal } from './components';
 import { DeviceStage } from './DeviceStage';
+import { MediaControls } from './MediaControls';
 import { demoHosts, demoInventory } from './demo';
 import { DiagnosticsModal } from './DiagnosticsModal';
 import { explainFailure, redactSecrets } from '../shared/diagnostics';
@@ -83,6 +85,7 @@ export function App() {
   const [connectionStatus, setConnectionStatus] = useState('');
   const [canRetry, setCanRetry] = useState(false);
   const [metadata, setMetadata] = useState<StreamMeta>();
+  const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>({ phase: 'idle' });
   const [fps, setFps] = useState(0);
   const [targetFps, setTargetFps] = useState(30);
   const [homeSignal, setHomeSignal] = useState(0);
@@ -652,7 +655,11 @@ export function App() {
                         : 'Disconnected'}
                 </span>
                 <div className="viewer-heading-actions">
-                  {/* Session/window actions belong here: pop out, retry, cancel, return. */}
+                  {recordingStatus.phase === 'recording' && (
+                    <span role="status" className="recording-indicator">
+                      ● Recording
+                    </span>
+                  )}
                   {stream === 'off' ? (
                     <button
                       className="button primary small"
@@ -921,6 +928,18 @@ export function App() {
                       </button>
                     </div>
                   </div>
+                  {!demo && (
+                    <details className="control-group workspace-media">
+                      <summary>Recording, audio & quality</summary>
+                      <MediaControls
+                        api={demo ? undefined : api}
+                        connected={stream === 'live'}
+                        maxFps={targetFps}
+                        onError={reportError}
+                        onRecordingChange={setRecordingStatus}
+                      />
+                    </details>
+                  )}
                   <div className="control-group">
                     <span className="control-label">Stream</span>
                     <label className="quality-label">
@@ -928,7 +947,7 @@ export function App() {
                       <select
                         aria-label="Requested frame rate"
                         value={targetFps}
-                        disabled={!!busy}
+                        disabled={!!busy || stream !== 'off'}
                         onChange={(e) => {
                           const rate = Number(e.target.value);
                           setTargetFps(rate);

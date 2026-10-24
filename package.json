@@ -19,7 +19,8 @@
     "test:sessions:native": "npm run build && node --import tsx tests/native-session-smoke.ts",
     "package": "npm run build && electron-builder",
     "package:dir": "npm run build && electron-builder --dir",
-    "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs"
+    "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs",
+    "benchmark:media": "tsx scripts/benchmark-media.ts"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.0",
@@ -74,7 +75,9 @@
         "NSLocalNetworkUsageDescription": "Sim Relay finds Macs on your network and connects to their iOS simulators.",
         "NSBonjourServices": [
           "_simrelay._tcp"
-        ]
+        ],
+        "NSAudioCaptureUsageDescription": "Share Mac playback audio with a paired Sim Relay client. Audio includes every app on this Mac.",
+        "NSScreenCaptureUsageDescription": "Capture Mac playback audio for Sim Relay. Desktop video is not sent."
       },
       "artifactName": "Sim-Relay-${version}-mac-${arch}.${ext}",
       "minimumSystemVersion": "13.0",

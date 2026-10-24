@@ -35,6 +35,7 @@ interface SessionDependencies {
   open(target: SessionTarget, signal: AbortSignal): Promise<StreamSocket>;
   notice(notice: StreamNotice): void;
   frame(data: Uint8Array): void;
+  message?(data: Uint8Array, binary: boolean): boolean;
   schedule?(callback: () => void, delay: number): unknown;
   cancel?(timer: unknown): void;
 }
@@ -156,6 +157,7 @@ export class RelaySession {
       };
       socket.on('message', (data: Uint8Array, binary: boolean) => {
         if (failed || this.socket !== socket || generation !== this.generation) return;
+        if (this.deps.message?.(data, binary)) return;
         if (binary) {
           if (this.live) this.deps.frame(new Uint8Array(data));
           return;

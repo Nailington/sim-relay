@@ -22,6 +22,7 @@ import {
 import type { DesktopApi, InputEvent, StreamMeta, Point } from '../shared/types';
 import { displayDimensions, fitDisplay, surfacePoint } from '../shared/display';
 import { keyCode, normalizedPoint } from './input';
+import { subscribeVideo } from './media-playback';
 
 const apps = [
   ['Messages', MessageCircle, '#28c469'],
@@ -210,65 +211,20 @@ export function DeviceStage({
   }, [metadata?.rotation, metadata?.width, metadata?.height]);
   useEffect(() => {
     if (demo || !api || !connected) return;
-    let disposed = false,
-      busy = false,
-      latest: Uint8Array | undefined,
-      count = 0;
-    const paint = async () => {
-      if (busy || !latest || disposed) return;
-      busy = true;
-      const frame = latest;
-      latest = undefined;
-      try {
-        const bitmap = await createImageBitmap(
-          new Blob([new Uint8Array(frame)], { type: 'image/jpeg' }),
-        );
-        const el = canvas.current;
-        if (!disposed && el) {
-          const rotation = meta.current?.rotation ?? 0;
-          const sideways = rotation === 90 || rotation === 270;
-          const width = sideways ? bitmap.height : bitmap.width,
-            height = sideways ? bitmap.width : bitmap.height;
-          if (el.width !== width || el.height !== height) {
-            el.width = width;
-            el.height = height;
-          }
-          const ctx = el.getContext('2d');
-          if (ctx) {
-            ctx.save();
-            ctx.clearRect(0, 0, width, height);
-            ctx.translate(width / 2, height / 2);
-            ctx.rotate((rotation * Math.PI) / 180);
-            ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
-            ctx.restore();
-          }
-          count++;
-        }
-        bitmap.close();
-      } catch {
-        if (!disposed) onError('Cannot decode the simulator video. Retry the display.');
-      } finally {
-        busy = false;
-        if (latest && !disposed) void paint();
-      }
-    };
-    const off = api.onFrame((frame) => {
-      latest = frame;
-      void paint();
-    });
-    const timer = setInterval(() => {
-      onFps(count);
-      count = 0;
-    }, 1000);
+    const off = subscribeVideo(
+      api,
+      () => canvas.current,
+      onFps,
+      onError,
+      () => meta.current?.rotation ?? 0,
+    );
     const hidden = () => {
       if (document.hidden) release();
     };
     window.addEventListener('blur', release);
     document.addEventListener('visibilitychange', hidden);
     return () => {
-      disposed = true;
       off();
-      clearInterval(timer);
       release();
       window.removeEventListener('blur', release);
       document.removeEventListener('visibilitychange', hidden);

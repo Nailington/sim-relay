@@ -1,4 +1,10 @@
 import https from 'node:https';
+import path from 'node:path';
+import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { HostMedia, MediaPeer } from './media';
+import { RecordingStore } from './recording';
+import type { VideoSettings } from '../shared/media';
 import packageMetadata from '../../package.json';
 import { HOST_PROTOCOL_VERSION } from '../shared/host-info';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -23,7 +29,12 @@ export interface Backend {
     frame: (frame: Buffer) => void,
     error: (e: Error) => void,
     signal?: AbortSignal,
-  ): Promise<{ metadata: StreamMeta; input(e: InputEvent): void; close(): Promise<void> }>;
+  ): Promise<{
+    metadata: StreamMeta;
+    input(e: InputEvent): void;
+    close(): Promise<void>;
+    setVideoSettings?(settings: VideoSettings): void;
+  }>;
 }
 const uuid = z.string().uuid();
 const commandSchema = z.object({
@@ -68,6 +79,7 @@ export async function startHost(options: {
   advertise?: boolean;
   backend?: Backend;
   info?: HostInfo;
+  media?: HostMedia;
 }) {
   if (!options.backend && platform() !== 'darwin')
     throw new Error(
@@ -88,6 +100,14 @@ export async function startHost(options: {
       .then(() => true)
       .catch(() => false),
   };
+  const media =
+    options.media ??
+    new HostMedia(
+      new RecordingStore(path.join(options.directory, 'recordings')),
+      undefined,
+      !options.backend && info.xcode,
+    );
+  await media.initialize();
   info.clientAuthorization = true;
   info.protocolVersion = HOST_PROTOCOL_VERSION;
   const controllers = new Map<string, WebSocket>();
@@ -135,7 +155,14 @@ export async function startHost(options: {
         clientId,
         revoke() {
           revoked = true;
-          if (res.writableEnded || res.destroyed) return;
+          if (res.destroyed) return;
+          if (res.headersSent) {
+            // A download already has its status and length on the wire. Destroying
+            // the response also tears down its file pipeline; a 401 cannot replace it.
+            res.destroy();
+            req.destroy();
+            return;
+          }
           // End the response and body reader even when a peer never finishes its upload.
           res.setHeader('Connection', 'close');
           res.once('finish', () => req.destroy());
@@ -159,6 +186,31 @@ export async function startHost(options: {
         return backend.run(...args);
       };
       try {
+        const download = pathname.match(/^\/recordings\/([\da-f-]{36})$/i);
+        if (download && req.method === 'GET') {
+          const ticket = req.headers['x-recording-ticket'];
+          const recording = media.recordings.download(
+            download[1],
+            typeof ticket === 'string' ? ticket : undefined,
+          );
+          if (!recording)
+            return json(res, 404, {
+              error: 'Recording expired or was discarded. Record it again.',
+            });
+          res.writeHead(200, {
+            'Content-Type': 'video/mp4',
+            'Content-Length': recording.bytes,
+            'Cache-Control': 'no-store',
+            'Content-Disposition': 'attachment; filename="Simulator.mp4"',
+            'X-Content-Type-Options': 'nosniff',
+          });
+          try {
+            await pipeline(createReadStream(recording.file), res);
+          } catch {
+            res.destroy();
+          }
+          return;
+        }
         if (pathname === '/devices' && req.method === 'GET')
           return json(res, 200, await inventory());
         if (pathname === '/devices' && req.method === 'POST') {
@@ -322,6 +374,10 @@ export async function startHost(options: {
     let session: Awaited<ReturnType<Backend['session']>> | undefined;
     let pending: ReturnType<Backend['session']> | undefined;
     let closing: Promise<void> | undefined;
+    const peer = new MediaPeer(ws, udid, fps, media, (settings) =>
+      session?.setVideoSettings?.(settings),
+    );
+    const mediaTimer = setInterval(() => peer.tick(), 1000);
     let sentDimensions = '';
     const metadataKey = (metadata: StreamMeta) => JSON.stringify(metadata);
     const abort = new AbortController();
@@ -330,7 +386,9 @@ export async function startHost(options: {
     const cleanup = (): Promise<void> => {
       alive = false;
       abort.abort();
+      clearInterval(mediaTimer);
       return (closing ??= (async () => {
+        await peer.close().catch(() => {});
         try {
           await (session ?? (await pending))?.close();
         } catch {
@@ -379,7 +437,9 @@ export async function startHost(options: {
         return;
       }
       try {
-        const event = inputSchema.parse(JSON.parse(raw.toString()));
+        const value = JSON.parse(raw.toString());
+        if (peer.handle(value)) return;
+        const event = inputSchema.parse(value);
         if (session) session.input(event);
         else if (!opening) throw new Error('The input service is unavailable.');
       } catch (e) {
@@ -409,7 +469,7 @@ export async function startHost(options: {
             alive &&
             authorized() &&
             ws.readyState === WebSocket.OPEN &&
-            ws.bufferedAmount < 2 * 1024 * 1024
+            peer.video.allow(data.length, ws.bufferedAmount)
           ) {
             if (session && sentDimensions !== metadataKey(session.metadata)) {
               send({ type: 'metadata', metadata: session.metadata });
@@ -426,6 +486,7 @@ export async function startHost(options: {
       );
       session = await pending;
       opening = false;
+      session.setVideoSettings?.(peer.video.settings);
       if (!alive) await cleanup();
       else {
         sentDimensions = metadataKey(session.metadata);
@@ -461,22 +522,43 @@ export async function startHost(options: {
           (id) => [...clientStreams.values()].filter((value) => value === id).length,
         );
       await clients.revoke(data.id);
-      for (const request of clientRequests.values()) {
-        if (request.clientId === data.id) request.revoke();
+      for (const [req, request] of clientRequests) {
+        if (request.clientId !== data.id) continue;
+        try {
+          request.revoke();
+        } catch {
+          // One failed response must not skip other requests or controller cleanup.
+          try {
+            req.destroy();
+          } catch {
+            /* Continue closing the other transports. */
+          }
+        }
       }
       const matching = [...clientStreams].filter(([, id]) => id === data.id);
       // Close every transport before starting or awaiting any backend cleanup.
       for (const [ws] of matching) {
-        if (ws.readyState === WebSocket.OPEN)
-          ws.send(
-            JSON.stringify({
-              type: 'error',
-              code: 'authorization_required',
-              message: 'Access was revoked on the Mac. Pair with the Mac again to reconnect.',
-            }),
-          );
-        ws.close(4003, 'Authorization revoked');
-        const timeout = setTimeout(() => ws.terminate(), streamCloseTimeout);
+        const terminate = () => {
+          try {
+            ws.terminate();
+          } catch {
+            /* Backend cleanup must still run if this socket has failed. */
+          }
+        };
+        try {
+          if (ws.readyState === WebSocket.OPEN)
+            ws.send(
+              JSON.stringify({
+                type: 'error',
+                code: 'authorization_required',
+                message: 'Access was revoked on the Mac. Pair with the Mac again to reconnect.',
+              }),
+            );
+          ws.close(4003, 'Authorization revoked');
+        } catch {
+          terminate();
+        }
+        const timeout = setTimeout(terminate, streamCloseTimeout);
         timeout.unref();
         ws.once('close', () => clearTimeout(timeout));
       }

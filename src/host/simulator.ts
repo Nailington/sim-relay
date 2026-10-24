@@ -9,6 +9,7 @@ import * as protoLoader from '@grpc/proto-loader';
 import type { Inventory, StreamMeta, InputEvent, Orientation } from '../shared/types';
 import { hidEvents, JpegFramer, jpegDimensions } from './protocol';
 import { HidDispatcher } from './hid';
+import type { VideoSettings } from '../shared/media';
 import { displayRotation } from '../shared/display';
 
 export const exec = promisify(execFile);
@@ -127,6 +128,10 @@ export class SimulatorSession {
   private requestedOrientation: Orientation = 'PORTRAIT';
   private activeTouch?: { x: number; y: number };
   private keys = new Set<number>();
+  private videoSettings: VideoSettings = { fps: 30, scale: 1, quality: 0.7 };
+  private frame?: (data: Buffer) => void;
+  private onVideoError?: (error: Error) => void;
+  private pointSize?: { short: number; long: number };
   static async open(
     udid: string,
     fps: number,
@@ -237,48 +242,17 @@ export class SimulatorSession {
           if (!session.closed) onError(error);
         },
       );
-      session.video = session.client.videoStream();
-      const framer = new JpegFramer();
-      session.video.on('data', (response) => {
-        if (!response.payload?.data) return;
-        try {
-          for (const jpeg of framer.push(response.payload.data)) {
-            const dimensions = jpegDimensions(jpeg);
-            if (
-              dimensions &&
-              (session.metadata.width !== dimensions.width ||
-                session.metadata.height !== dimensions.height)
-            ) {
-              const density = session.metadata.width / session.metadata.widthPoints;
-              session.release();
-              session.metadata = {
-                ...session.metadata,
-                ...dimensions,
-                widthPoints: dimensions.width / density,
-                heightPoints: dimensions.height / density,
-              };
-            }
-            session.updateOrientation(session.metadata.orientationSource);
-            frame(jpeg);
-          }
-        } catch (e) {
-          onError(e as Error);
-        }
-      });
-      session.video.on('error', (error) => {
-        if (!session.closed) onError(error);
-      });
-      session.video.on('end', () => {
-        if (!session.closed)
-          onError(new Error('The simulator stopped streaming. Reconnect to resume.'));
-      });
+      session.frame = frame;
+      session.onVideoError = onError;
+      session.pointSize = {
+        short: Math.min(session.metadata.widthPoints, session.metadata.heightPoints),
+        long: Math.max(session.metadata.widthPoints, session.metadata.heightPoints),
+      };
       session.child.on('exit', () => {
         if (!session.closed)
           onError(new Error('The simulator input service stopped. Reconnect to resume.'));
       });
-      session.video.write({
-        start: { format: 'MJPEG', fps, compressionQuality: 0.7, scaleFactor: 1 },
-      });
+      session.setVideoSettings({ fps, scale: 1, quality: 0.7 });
       return session;
     } catch (e) {
       await session.close();
@@ -286,6 +260,59 @@ export class SimulatorSession {
     } finally {
       signal?.removeEventListener('abort', abort);
     }
+  }
+  /** Restart only the video RPC; HID and simulator ownership remain intact. */
+  setVideoSettings(settings: VideoSettings) {
+    if (this.closed || !this.client) return;
+    this.videoSettings = settings;
+    const old = this.video;
+    this.video = undefined;
+    old?.cancel();
+    const video = this.client.videoStream();
+    this.video = video;
+    const framer = new JpegFramer();
+    video.on('data', (response) => {
+      if (this.closed || this.video !== video || !response.payload?.data) return;
+      try {
+        for (const jpeg of framer.push(response.payload.data)) {
+          const dimensions = jpegDimensions(jpeg);
+          if (dimensions && this.pointSize) {
+            // Encoded pixels may be scaled. Input coordinates always use native points.
+            const landscape = dimensions.width > dimensions.height;
+            if (
+              dimensions.width !== this.metadata.width ||
+              dimensions.height !== this.metadata.height
+            )
+              this.release();
+            this.metadata = {
+              ...this.metadata,
+              ...dimensions,
+              widthPoints: landscape ? this.pointSize.long : this.pointSize.short,
+              heightPoints: landscape ? this.pointSize.short : this.pointSize.long,
+            };
+          }
+          this.updateOrientation(this.metadata.orientationSource);
+          this.frame?.(jpeg);
+        }
+      } catch (e) {
+        this.onVideoError?.(e as Error);
+      }
+    });
+    video.on('error', (error) => {
+      if (!this.closed && this.video === video) this.onVideoError?.(error);
+    });
+    video.on('end', () => {
+      if (!this.closed && this.video === video)
+        this.onVideoError?.(new Error('The simulator stopped streaming. Reconnect to resume.'));
+    });
+    video.write({
+      start: {
+        format: 'MJPEG',
+        fps: this.videoSettings.fps,
+        compressionQuality: this.videoSettings.quality,
+        scaleFactor: this.videoSettings.scale,
+      },
+    });
   }
   private updateOrientation(source = this.metadata.orientationSource) {
     const orientation = this.requestedOrientation;

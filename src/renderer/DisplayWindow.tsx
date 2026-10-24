@@ -1,6 +1,8 @@
+import type { RecordingStatus } from '../shared/media';
 import { useCallback, useEffect, useState } from 'react';
 import { Camera, House, Maximize2, RotateCw } from 'lucide-react';
 import type { DisplayContext, InputEvent, StreamMeta, StreamNotice } from '../shared/types';
+import { MediaControls } from './MediaControls';
 import { DeviceStage } from './DeviceStage';
 import { ActionModal } from './dialogs';
 import { Busy, IconButton } from './components';
@@ -9,6 +11,7 @@ type Action = 'url' | 'text' | 'location' | 'command';
 export function DisplayWindow() {
   const api = window.relay!;
   const [context, setContext] = useState<DisplayContext>();
+  const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>({ phase: 'idle' });
   const [metadata, setMetadata] = useState<StreamMeta>();
   const [status, setStatus] = useState<StreamNotice['state']>('connecting');
   const [message, setMessage] = useState('Connecting display');
@@ -115,6 +118,9 @@ export function DisplayWindow() {
     return (
       <div className="display-window">
         <p role="status">{error || 'Opening simulator display…'}</p>
+        <div hidden>
+          <MediaControls api={api} connected={false} onError={reportError} />
+        </div>
       </div>
     );
   const disabled = status !== 'live' || !!busy;
@@ -140,6 +146,23 @@ export function DisplayWindow() {
           </span>
         </div>
         <div className="display-toolbar-actions">
+          {recordingStatus.phase === 'recording' && (
+            <span role="status" className="recording-indicator">
+              ● Recording
+            </span>
+          )}
+          <details className="display-menu" name="display-tools">
+            <summary>Media</summary>
+            <div className="display-media-panel">
+              <MediaControls
+                api={api}
+                connected={status === 'live'}
+                maxFps={requested}
+                onRecordingChange={setRecordingStatus}
+                onError={reportError}
+              />
+            </div>
+          </details>
           <IconButton
             label="Home"
             disabled={disabled}
@@ -254,7 +277,7 @@ export function DisplayWindow() {
                 Requested frame rate
                 <select
                   value={requested}
-                  disabled={!!busy}
+                  disabled={!!busy || (status !== 'off' && status !== 'failed')}
                   onChange={(e) => {
                     const rate = Number(e.target.value);
                     setRequested(rate);

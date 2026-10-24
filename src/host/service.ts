@@ -18,6 +18,8 @@ const settingNames = [
   'SIM_RELAY_BIND',
   'SIM_RELAY_STATE_DIR',
   'IDB_COMPANION_PATH',
+  'SIM_RELAY_ENABLE_HOST_AUDIO',
+  'SIM_RELAY_AUDIO_HELPER',
 ] as const;
 type Settings = Record<string, string>;
 interface Agent {

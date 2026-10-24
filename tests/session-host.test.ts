@@ -147,9 +147,10 @@ test('real pinned HTTPS/WSS isolates two devices, rejects conflicts, forwards ro
     assert.equal(state.get(ids[1])!.closed, false);
     inventory.devices[0].state = 'Shutdown';
     const stopped = open(ids[0]);
-    await wait(() => stopped.notices.length > 0);
-    assert.equal(stopped.notices[0].terminal, true);
-    assert.match(stopped.notices[0].message!, /not booted/);
+    await wait(() => stopped.notices.some((notice) => notice.type === 'error'));
+    const failure = stopped.notices.find((notice) => notice.type === 'error')!;
+    assert.equal(failure.terminal, true);
+    assert.match(failure.message!, /not booted/);
     assert.equal(starts, 3);
   } finally {
     for (const socket of sockets) socket.terminate();

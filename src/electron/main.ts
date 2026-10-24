@@ -11,6 +11,8 @@ import { startHost } from '../host/server';
 import { installHostCommand } from './host-command';
 import { createDiagnostics } from './diagnostics';
 import { serializeReport, type DiagnosticStage } from '../shared/diagnostics';
+import { ClientMedia } from './media';
+import type { MediaAction, QualityLimits } from '../shared/media';
 import { inputSchema } from '../host/protocol';
 import { RelaySession, SessionFailure, SessionRouter } from './session';
 import { parseHostInfo } from '../shared/host-info';
@@ -25,11 +27,15 @@ import type {
 
 let window: BrowserWindow;
 let workspaceContext: DisplayContext | undefined;
+// Window loading yields to other IPC calls. Serialize ownership changes through completion.
+let ownershipTail: Promise<unknown> = Promise.resolve();
+const canceledSelections = new Map<number, number>();
 let discovery: Bonjour | undefined;
 const windows = new Map<number, BrowserWindow>();
 const displays = new Map<number, DisplayContext>();
 const sessions = new SessionRouter<number, RelaySession>();
 const identities = new WeakMap<RelaySession, DisplayContext>();
+const mediaBySession = new WeakMap<RelaySession, ClientMedia>();
 let sharing: Awaited<ReturnType<typeof startHost>> | undefined;
 const profiles = new Map<string, Profile>(),
   discovered = new Map<string, HostEntry>();
@@ -83,7 +89,10 @@ async function saveProfiles() {
   }
 }
 function disconnect(owner: BrowserWindow) {
-  sessions.get(owner.id)?.disconnect();
+  canceledSelections.set(owner.id, (canceledSelections.get(owner.id) ?? 0) + 1);
+  const session = sessions.get(owner.id);
+  session?.disconnect();
+  return session ? (mediaBySession.get(session)?.close() ?? Promise.resolve()) : Promise.resolve();
 }
 function handle(channel: string, fn: (...args: any[]) => unknown, withWindow = false) {
   ipcMain.handle(channel, async (event, ...args) => {
@@ -97,7 +106,23 @@ function handle(channel: string, fn: (...args: any[]) => unknown, withWindow = f
         ? args[0]
         : undefined;
     try {
-      const result = await (withWindow ? fn(owner, ...args) : fn(...args));
+      const generation = canceledSelections.get(owner.id) ?? 0;
+      const invoke = () => {
+        if (owner.isDestroyed() || !windows.has(owner.id))
+          throw new Error('This display was closed.');
+        if (
+          ['connect', 'retry'].includes(channel) &&
+          generation !== (canceledSelections.get(owner.id) ?? 0)
+        )
+          throw new Error('Connection canceled.');
+        return withWindow ? fn(owner, ...args) : fn(...args);
+      };
+      let result: unknown;
+      if (['connect', 'retry', 'pop-out', 'return-display'].includes(channel)) {
+        const operation = ownershipTail.then(invoke);
+        ownershipTail = operation.catch(() => {});
+        result = await operation;
+      } else result = await invoke();
       if (stage) diagnostics.record(stage, 'passed', hostId);
       return result;
     } catch (error) {
@@ -119,7 +144,9 @@ function sessionFor(owner: BrowserWindow) {
     }
   };
   session = new RelaySession({
-    frame: (data) => send('frame', data),
+    frame: (data) => mediaBySession.get(session!)?.video(Buffer.from(data)),
+    message: (data, binary) =>
+      mediaBySession.get(session!)?.message(Buffer.from(data), binary) ?? false,
     notice: (notice) => {
       const hostId = session?.target?.hostId;
       if (notice.type === 'status' && notice.state === 'live')
@@ -155,6 +182,19 @@ function sessionFor(owner: BrowserWindow) {
         maxPayload: 16 * 1024 * 1024,
         perMessageDeflate: false,
       });
+      const media = new ClientMedia(
+        socket,
+        p,
+        (channel, value) => {
+          if (mediaBySession.get(session!) === media) send(channel, value);
+        },
+        fps,
+      );
+      mediaBySession.set(session!, media);
+      socket.once('close', () => {
+        void media.close();
+        if (mediaBySession.get(session!) === media) mediaBySession.delete(session!);
+      });
       // A canceled preflight can discard a just-created socket before RelaySession attaches.
       socket.on('error', () => {});
       socket.on('unexpected-response', (_req, response) => {
@@ -184,7 +224,16 @@ function sessionFor(owner: BrowserWindow) {
         socket.emit('error', new Error('The simulator did not start streaming within 60 seconds.'));
         socket.terminate();
       }, 60000);
-      socket.on('message', () => clearTimeout(startup));
+      socket.on('message', (data, binary) => {
+        if (!binary) {
+          try {
+            const type = JSON.parse(data.toString()).type;
+            if (type === 'metadata' || type === 'error') clearTimeout(startup);
+          } catch {
+            /* RelaySession reports malformed metadata. */
+          }
+        }
+      });
       socket.once('close', () => {
         clearInterval(heartbeat);
         clearTimeout(startup);
@@ -257,6 +306,7 @@ async function detach(owner: BrowserWindow, context: DisplayContext) {
   if (session?.target?.hostId === context.host.id && session.target.udid === context.device.udid) {
     session.release();
     sessions.move(owner.id, display.id);
+    mediaBySession.get(session)?.reparent();
     owner.webContents.send('notice', {
       type: 'status',
       state: 'off',
@@ -393,11 +443,72 @@ async function main() {
         windows.get(existing)?.focus();
         throw new Error('This simulator is already open in another display. Use that window.');
       }
-      await sessionFor(owner).connect({ hostId: id, udid, fps });
+      const session = sessionFor(owner);
+      await session.connect({ hostId: id, udid, fps });
+      mediaBySession.get(session)?.reannounce();
     },
     true,
   );
   handle('disconnect', disconnect, true);
+  const mediaForWindow = (owner: BrowserWindow) => {
+    const session = sessions.get(owner.id);
+    const media = session && mediaBySession.get(session);
+    if (!media || !session?.active) throw new Error('Connect to a simulator first.');
+    return media;
+  };
+  handle(
+    'media-quality',
+    (owner: BrowserWindow, limits: QualityLimits) => mediaForWindow(owner).quality(limits),
+    true,
+  );
+  handle(
+    'media-command',
+    async (owner: BrowserWindow, action: MediaAction, consent?: boolean) => {
+      if (
+        ![
+          'recording-start',
+          'recording-stop',
+          'recording-discard',
+          'audio-start',
+          'audio-stop',
+        ].includes(action)
+      )
+        throw new Error('Unknown media action.');
+      await mediaForWindow(owner).command(action, consent === true);
+    },
+    true,
+  );
+  handle(
+    'save-recording',
+    (owner: BrowserWindow) =>
+      mediaForWindow(owner).save(async () => {
+        const result = await dialog.showSaveDialog(owner, {
+          defaultPath: `Simulator-${new Date().toISOString().replace(/[:.]/g, '-')}.mp4`,
+          filters: [{ name: 'MP4 video (silent)', extensions: ['mp4'] }],
+        });
+        return result.canceled ? undefined : result.filePath;
+      }),
+    true,
+  );
+  for (const channel of ['video-consumed', 'audio-consumed', 'video-feedback']) {
+    ipcMain.on(channel, (event, value) => {
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      if (!owner || !windows.has(owner.id) || event.senderFrame !== owner.webContents.mainFrame)
+        return;
+      const session = sessions.get(owner.id);
+      const media = session && mediaBySession.get(session);
+      if (channel === 'video-consumed') media?.consumed();
+      else if (channel === 'audio-consumed') media?.consumedAudio();
+      else {
+        try {
+          media?.feedback(value);
+        } catch {
+          /* Ignore stale feedback. */
+        }
+      }
+    });
+  }
+
   handle(
     'retry',
     (owner: BrowserWindow) => {
@@ -453,17 +564,24 @@ async function main() {
     async (owner: BrowserWindow) => {
       const context = displays.get(owner.id);
       if (!context) return;
-      const reopenWorkspace = window.isDestroyed();
+      let reopenWorkspace = window.isDestroyed();
       if (reopenWorkspace) window = createWindow();
       const workspaceSession = sessions.get(window.id);
       const previous = workspaceSession?.active ? workspaceSession.target : undefined;
       if (previous) await detach(window, selectionFor(workspaceSession)!);
+      // The OS may close either window while the detached renderer is loading.
+      if (owner.isDestroyed()) return;
+      if (window.isDestroyed()) {
+        window = createWindow();
+        reopenWorkspace = true;
+      }
       sessions.delete(window.id);
       const session = sessions.get(owner.id);
       context.sessionActive = !!session?.active;
       if (session) {
         session.release();
         sessions.move(owner.id, window.id);
+        mediaBySession.get(session)?.reparent();
         context.fps = session.target?.fps ?? context.fps;
       }
       if (reopenWorkspace) {
@@ -588,7 +706,12 @@ app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
   quitting = true;
-  for (const [, session] of sessions.entries()) session.disconnect();
+  const cleanups: Promise<unknown>[] = [];
+  for (const [, session] of sessions.entries()) {
+    session.disconnect();
+    cleanups.push(mediaBySession.get(session)?.close() ?? Promise.resolve());
+  }
   discovery?.destroy();
-  void (sharing?.close() ?? Promise.resolve()).finally(() => app.quit());
+  cleanups.push(sharing?.close() ?? Promise.resolve());
+  void Promise.allSettled(cleanups).finally(() => app.quit());
 });
