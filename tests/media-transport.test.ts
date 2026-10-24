@@ -65,7 +65,11 @@ test(
       }),
     );
     const backend: Backend = {
-      inventory: async () => ({ devices: [{ udid, name: 'Test', runtime: '', state: 'Booted' }], runtimes: [], devicetypes: [] }),
+      inventory: async () => ({
+        devices: [{ udid, name: 'Test', runtime: '', state: 'Booted' }],
+        runtimes: [],
+        devicetypes: [],
+      }),
       run: async () => '',
       session: async () => ({
         metadata,

@@ -85,4 +85,16 @@
   font-variant-numeric: tabular-nums;
 }
 
-.display-menu > .display-media-panel { width: min(340px, calc(100vw - 24px)); padding: 14px; }
+.display-menu > .display-media-panel {
+  width: min(340px, calc(100vw - 24px));
+  padding: 14px;
+}
+
+.workspace-media > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+}
+.workspace-media .media-controls fieldset:first-child {
+  margin-top: 12px;
+}

@@ -75,9 +75,12 @@ const api: DesktopApi = {
   onMediaNotice: (callback) => {
     mediaListeners.add(callback);
     queueMicrotask(() => {
-      if (mediaListeners.has(callback)) for (const notice of mediaNotices.values()) callback(notice);
+      if (mediaListeners.has(callback))
+        for (const notice of mediaNotices.values()) callback(notice);
     });
-    return () => { mediaListeners.delete(callback); };
+    return () => {
+      mediaListeners.delete(callback);
+    };
   },
   onNotice: (callback) => {
     const listener = (

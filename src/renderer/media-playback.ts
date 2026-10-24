@@ -34,7 +34,7 @@ export function subscribeVideo(
           ctx.save();
           ctx.clearRect(0, 0, width, height);
           ctx.translate(width / 2, height / 2);
-          ctx.rotate(angle * Math.PI / 180);
+          ctx.rotate((angle * Math.PI) / 180);
           ctx.drawImage(bitmap, -bitmap.width / 2, -bitmap.height / 2);
           ctx.restore();
         }

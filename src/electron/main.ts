@@ -88,7 +88,7 @@ async function saveProfiles() {
 function disconnect(owner: BrowserWindow) {
   const session = sessions.get(owner.id);
   session?.disconnect();
-  return session ? mediaBySession.get(session)?.close() ?? Promise.resolve() : Promise.resolve();
+  return session ? (mediaBySession.get(session)?.close() ?? Promise.resolve()) : Promise.resolve();
 }
 function handle(channel: string, fn: (...args: any[]) => unknown, withWindow = false) {
   ipcMain.handle(channel, async (event, ...args) => {
@@ -125,7 +125,8 @@ function sessionFor(owner: BrowserWindow) {
   };
   session = new RelaySession({
     frame: (data) => mediaBySession.get(session!)?.video(Buffer.from(data)),
-    message: (data, binary) => mediaBySession.get(session!)?.message(Buffer.from(data), binary) ?? false,
+    message: (data, binary) =>
+      mediaBySession.get(session!)?.message(Buffer.from(data), binary) ?? false,
     notice: (notice) => {
       const hostId = session?.target?.hostId;
       if (notice.type === 'status' && notice.state === 'live')
@@ -198,7 +199,16 @@ function sessionFor(owner: BrowserWindow) {
         socket.emit('error', new Error('The simulator did not start streaming within 60 seconds.'));
         socket.terminate();
       }, 60000);
-      socket.on('message', () => clearTimeout(startup));
+      socket.on('message', (data, binary) => {
+        if (!binary) {
+          try {
+            const type = JSON.parse(data.toString()).type;
+            if (type === 'metadata' || type === 'error') clearTimeout(startup);
+          } catch {
+            /* RelaySession reports malformed metadata. */
+          }
+        }
+      });
       socket.once('close', () => {
         clearInterval(heartbeat);
         clearTimeout(startup);
@@ -421,30 +431,56 @@ async function main() {
     if (!media || !session?.active) throw new Error('Connect to a simulator first.');
     return media;
   };
-  handle('media-quality', (owner: BrowserWindow, limits: QualityLimits) =>
-    mediaForWindow(owner).quality(limits), true);
-  handle('media-command', async (owner: BrowserWindow, action: MediaAction, consent?: boolean) => {
-    if (!['recording-start', 'recording-stop', 'recording-discard', 'audio-start', 'audio-stop'].includes(action))
-      throw new Error('Unknown media action.');
-    await mediaForWindow(owner).command(action, consent === true);
-  }, true);
-  handle('save-recording', (owner: BrowserWindow) =>
-    mediaForWindow(owner).save(async () => {
-      const result = await dialog.showSaveDialog(owner, {
-        defaultPath: `Simulator-${new Date().toISOString().replace(/[:.]/g, '-')}.mp4`,
-        filters: [{ name: 'MP4 video (silent)', extensions: ['mp4'] }],
-      });
-      return result.canceled ? undefined : result.filePath;
-    }), true);
+  handle(
+    'media-quality',
+    (owner: BrowserWindow, limits: QualityLimits) => mediaForWindow(owner).quality(limits),
+    true,
+  );
+  handle(
+    'media-command',
+    async (owner: BrowserWindow, action: MediaAction, consent?: boolean) => {
+      if (
+        ![
+          'recording-start',
+          'recording-stop',
+          'recording-discard',
+          'audio-start',
+          'audio-stop',
+        ].includes(action)
+      )
+        throw new Error('Unknown media action.');
+      await mediaForWindow(owner).command(action, consent === true);
+    },
+    true,
+  );
+  handle(
+    'save-recording',
+    (owner: BrowserWindow) =>
+      mediaForWindow(owner).save(async () => {
+        const result = await dialog.showSaveDialog(owner, {
+          defaultPath: `Simulator-${new Date().toISOString().replace(/[:.]/g, '-')}.mp4`,
+          filters: [{ name: 'MP4 video (silent)', extensions: ['mp4'] }],
+        });
+        return result.canceled ? undefined : result.filePath;
+      }),
+    true,
+  );
   for (const channel of ['video-consumed', 'audio-consumed', 'video-feedback']) {
     ipcMain.on(channel, (event, value) => {
       const owner = BrowserWindow.fromWebContents(event.sender);
-      if (!owner || !windows.has(owner.id) || event.senderFrame !== owner.webContents.mainFrame) return;
+      if (!owner || !windows.has(owner.id) || event.senderFrame !== owner.webContents.mainFrame)
+        return;
       const session = sessions.get(owner.id);
       const media = session && mediaBySession.get(session);
       if (channel === 'video-consumed') media?.consumed();
       else if (channel === 'audio-consumed') media?.consumedAudio();
-      else { try { media?.feedback(value); } catch { /* Ignore stale feedback. */ } }
+      else {
+        try {
+          media?.feedback(value);
+        } catch {
+          /* Ignore stale feedback. */
+        }
+      }
     });
   }
 

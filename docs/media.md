@@ -192,6 +192,12 @@ extraResources into `Contents/Resources/host`, outside asar; the packaging sign 
 embedded binaries. The helper embeds its own identifier/usage descriptions. Desktop macOS usage
 descriptions are additive. Signed/notarized builds, TCC attribution, and macOS 13 runtime execution
 still need actual Mac checks; Linux builds intentionally skip Swift compilation.
+The capture lifecycle runs in a private nonisolated async function (explicitly `@concurrent`
+with Swift 6.2+), separate from Swift's implicitly MainActor-isolated async entry point. This
+keeps older SDKs' non-Sendable `SCShareableContent` snapshots local to the capture function;
+only `Void` returns to the entry point. No SDK type receives an unsafe Sendable conformance
+or concurrency-warning suppression. This addresses the Xcode 16.4/macOS 15.5 SDK CI diagnostic;
+compilation of this follow-up is pending the integrated PR's CI, not a new native compile claim.
 Nix builds also skip the helper (`SIM_RELAY_SKIP_NATIVE_AUDIO=1`) because their sandbox cannot
 use the separately installed Xcode SDK. Supply a helper compiled outside that sandbox through
 `SIM_RELAY_AUDIO_HELPER` to enable Mac audio for a Nix installation. Video/recording still work
@@ -209,7 +215,8 @@ without it. The Nix fileset includes the build script so Linux imports do not fa
 - Mount `<MediaControls api={api} connected={live} maxFps={requestedFps} onError={onError} />`
   once per main/pop-out display. Keep it mounted during connecting so early capability notices
   are not lost. It owns only local controls/playback, never another window's connection. A small
-  App mount is included; the session/window work must mount the same component in DisplayWindow.
+  workspace inspector and pop-out toolbar both mount it. A recording indicator remains visible
+  in each display heading while the secondary media controls are collapsed.
 - DeviceStage uses `subscribeVideo(api, () => canvas.current, onFps, onError)` with cleanup on
   disconnection. Keep its independent pointer/key cleanup and orientation metadata handling.
 - Host Backend sessions optionally implement `setVideoSettings`. `startHost` accepts an injectable
@@ -275,7 +282,11 @@ Dynamic Type and Reduce Motion; actual VoiceOver/large-text runtime checks remai
 
 ## Validation still required before closing issues
 
-Automated here: `npm test` (19 tests), `npm run check`, `npm run build`, and the synthetic benchmark.
+Combined-stack automation: `npm test` (78 tests), `npm run check`, `npm run build`, and real
+headless Electron main/preload/renderer smoke. The latter verifies two pop-outs, retained recording
+across transfers, sender-window media/quality routing, late capture-state replay, and native dialog
+parenting with picker results stubbed. It does not exercise a real OS picker or real audio playback.
+The standalone media suite and synthetic benchmark also remain reproducible.
 Coverage includes quality bounds/recovery/decode feedback, split/hostile PCM framing, local audio
 opt-in/single-owner/startup races, recording idempotency/startup cancellation/finalization/discard,
 graceful process EOF/kill escalation, stale video-RPC suppression/native input coordinates, bounded

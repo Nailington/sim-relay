@@ -16,11 +16,13 @@ export function MediaControls({
   connected,
   maxFps = 30,
   onError,
+  onRecordingChange,
 }: {
   api?: DesktopApi;
   connected: boolean;
   maxFps?: number;
   onError(message: string): void;
+  onRecordingChange?(recording: RecordingStatus): void;
 }) {
   const [capabilities, setCapabilities] = useState<MediaCapabilities>();
   const [recording, setRecording] = useState<RecordingStatus>({ phase: 'idle' });
@@ -32,6 +34,9 @@ export function MediaControls({
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.7);
   const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    onRecordingChange?.(recording);
+  }, [recording, onRecordingChange]);
   const playback = useRef<AudioPlayback | undefined>(undefined);
   const errorHandler = useRef(onError);
   errorHandler.current = onError;

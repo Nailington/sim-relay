@@ -30,6 +30,8 @@ const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-12
     `window.nativeNotices=[];window.relay.onNotice(n=>window.nativeNotices.push(n));window.relay.connect(${hostId},${JSON.stringify(ids[0])},30)`,
   );
   await wait(() => js(main, `window.nativeNotices.some(n=>n.type==='metadata')`));
+  await js(main, 'window.relay.startRecording()');
+  await js(main, 'window.relay.startAudio(true)');
   await js(main, `window.relay.popOut(${hostId},${JSON.stringify(ids[0])},30)`);
   await wait(() => BrowserWindow.getAllWindows().length === 2);
   const a = BrowserWindow.getAllWindows().find((w) => w !== main);
@@ -38,6 +40,13 @@ const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-12
     js(a, `!!document.querySelector('canvas') && document.body.innerText.includes('Live')`),
   );
   assert.equal((await js(a, 'window.relay.displayContext()')).device.udid, ids[0]);
+  await wait(() => js(a, `!!document.querySelector('.recording-indicator')`));
+  await assert.rejects(js(main, 'window.relay.stopRecording()'), /Connect to a simulator/);
+  await js(
+    a,
+    `window.relay.setQuality({mode:'manual',maxFps:10,maxScale:0.5,quality:0.6,maxKbps:5000})`,
+  );
+  await js(a, 'window.relay.stopAudio()');
   await js(main, `window.relay.connect(${hostId},${JSON.stringify(ids[1])},15)`);
   await wait(() => js(main, `window.nativeNotices.filter(n=>n.type==='metadata').length>=2`));
   await js(main, `window.relay.popOut(${hostId},${JSON.stringify(ids[1])},15)`);
@@ -46,6 +55,18 @@ const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-12
   await ready(b);
   await wait(() =>
     js(b, `!!document.querySelector('canvas') && document.body.innerText.includes('Live')`),
+  );
+  await js(b, 'window.relay.startRecording()');
+  await js(
+    b,
+    `window.relay.setQuality({mode:'manual',maxFps:5,maxScale:0.5,quality:0.6,maxKbps:5000})`,
+  );
+  await js(a, 'window.relay.stopRecording()');
+  await wait(() =>
+    js(
+      a,
+      `document.querySelector('[aria-label="Media controls"]').textContent.includes('Save MP4')`,
+    ),
   );
   await js(a, `window.relay.input({type:'button',button:'HOME'})`);
   await js(b, `window.relay.input({type:'button',button:'LOCK'})`);
@@ -66,7 +87,8 @@ const ids = ['A1234567-1234-4123-8123-123456789ABC', 'B1234567-1234-4123-8123-12
     false,
   );
   assert.equal(await js(b, `window.relay.installApp(${hostId},${JSON.stringify(ids[1])})`), false);
-  assert.equal(saves, 1);
+  assert.equal(await js(a, 'window.relay.saveRecording()'), false);
+  assert.equal(saves, 2);
   assert.equal(installs, 1);
   await js(main, `window.relay.popOut(${hostId},${JSON.stringify(ids[0])},30)`);
   assert.equal(BrowserWindow.getAllWindows().length, 3);
