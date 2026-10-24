@@ -13,6 +13,7 @@ import type {
   RecordingDownload,
   VideoFeedback,
 } from '../shared/media';
+import { defaultQuality } from '../shared/media';
 import { feedbackSchema, qualitySchema } from '../host/adaptive';
 import { hostUrl, tlsOptions } from './remote';
 
@@ -127,7 +128,13 @@ export class ClientMedia {
     private socket: WebSocket,
     private profile: Profile,
     private send: (channel: string, value: unknown) => void,
-  ) {}
+    initialFps = 30,
+  ) {
+    this.notices.set('quality-state', {
+      type: 'quality-state',
+      limits: defaultQuality(initialFps),
+    });
+  }
   /** Drop acknowledgements belonging to the previous renderer without closing capture. */
   reparent() {
     this.framePending = this.audioPending = false;
@@ -186,7 +193,9 @@ export class ClientMedia {
   }
   quality(limits: QualityLimits) {
     if (!this.adaptive()) throw new Error('This host does not support adaptive stream quality.');
-    this.write({ type: 'quality', limits: qualitySchema.parse(limits) });
+    const checked = qualitySchema.parse(limits);
+    this.write({ type: 'quality', limits: checked });
+    this.notice({ type: 'quality-state', limits: checked });
   }
   private adaptive() {
     const notice = this.notices.get('media-capabilities');

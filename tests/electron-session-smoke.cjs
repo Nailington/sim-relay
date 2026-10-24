@@ -171,6 +171,10 @@ const ids = [
   );
   await js(reopened, `window.relay.connect(${hostId},${JSON.stringify(ids[2])},30)`);
   await wait(() => js(reopened, 'window.concurrentLive'));
+  await js(
+    reopened,
+    'window.nativeReturns=[];window.relay.onReturnDisplay(context=>window.nativeReturns.push(context));true',
+  );
   const originalLoadFile = BrowserWindow.prototype.loadFile;
   BrowserWindow.prototype.loadFile = async function (...args) {
     await new Promise((resolve) => setTimeout(resolve, 150));
@@ -182,10 +186,13 @@ const ids = [
   await wait(() => concurrentA.isDestroyed() && concurrentB.isDestroyed());
   BrowserWindow.prototype.loadFile = originalLoadFile;
   assert.equal(BrowserWindow.getAllWindows().length, 3);
+  await wait(() => js(reopened, 'window.nativeReturns.length===2'));
+  const targets = [];
   for (const owner of BrowserWindow.getAllWindows()) {
     await ready(owner);
     const context = await js(owner, 'window.relay.displayContext()');
-    const id = context?.device.udid ?? ids[1];
+    const id = context?.device.udid ?? (await js(owner, 'window.nativeReturns.at(-1).device.udid'));
+    targets.push(id);
     // Reannounce verifies ownership and host lease without creating a replacement transport.
     await js(owner, `window.relay.connect(${hostId},${JSON.stringify(id)},30)`);
     const index = ids.indexOf(id);
@@ -194,6 +201,11 @@ const ids = [
       `window.relay.input({type:'key',code:${40}+${index},phase:'down'});window.relay.input({type:'key',code:${40}+${index},phase:'up'})`,
     );
   }
+  assert.deepEqual(
+    targets.sort(),
+    [...ids].sort(),
+    'each simulator has exactly one surviving owner',
+  );
   console.log(
     'NATIVE_SESSION_SMOKE_OK: main/preload, two windows, transfer, independent input, duplicate focus, inactive reservation, per-window dialogs',
   );

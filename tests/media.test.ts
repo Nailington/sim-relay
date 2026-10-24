@@ -546,3 +546,28 @@ test('legacy hosts receive no media messages until capabilities are negotiated',
   assert.equal(socket.sent.at(-1).type, 'video-feedback');
   await client.close();
 });
+
+test('window transfer replays quality limits without reconfiguring the capture', async () => {
+  const socket = new FakeSocket();
+  const notices: any[] = [];
+  const client = new ClientMedia(
+    socket.socket,
+    {} as Profile,
+    (channel, value) => {
+      if (channel === 'media-notice') notices.push(value);
+    },
+    15,
+  );
+  client.reannounce();
+  assert.equal(notices.at(-1).limits.maxFps, 15);
+  negotiate(client);
+  const limits = { ...defaultQuality(10), mode: 'manual' as const, maxScale: 0.5 };
+  client.quality(limits);
+  const writes = socket.sent.length;
+  client.reparent();
+  notices.length = 0;
+  client.reannounce();
+  assert.deepEqual(notices.find((notice) => notice.type === 'quality-state').limits, limits);
+  assert.equal(socket.sent.length, writes);
+  await client.close();
+});

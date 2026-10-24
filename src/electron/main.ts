@@ -182,9 +182,14 @@ function sessionFor(owner: BrowserWindow) {
         maxPayload: 16 * 1024 * 1024,
         perMessageDeflate: false,
       });
-      const media = new ClientMedia(socket, p, (channel, value) => {
-        if (mediaBySession.get(session!) === media) send(channel, value);
-      });
+      const media = new ClientMedia(
+        socket,
+        p,
+        (channel, value) => {
+          if (mediaBySession.get(session!) === media) send(channel, value);
+        },
+        fps,
+      );
       mediaBySession.set(session!, media);
       socket.once('close', () => {
         void media.close();
