@@ -226,6 +226,7 @@ export function App() {
   useEffect(() => {
     if (!api) return;
     const restore = (context: DisplayContext) => {
+      selectionGeneration.current++;
       connectionAttempt.current++;
       setDemo(false);
       setHost(context.host);
