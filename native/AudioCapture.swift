@@ -75,36 +75,46 @@ struct AudioCapture {
                 print("screencapturekit-pcm16-48000-stereo-v1")
                 return
             }
-            signal(SIGPIPE, SIG_IGN)
-            _ = fcntl(STDOUT_FILENO, F_SETFL, O_NONBLOCK)
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            guard let display = content.displays.first else {
-                throw NSError(domain: "SimRelayAudio", code: 1,
-                              userInfo: [NSLocalizedDescriptionKey: "Log into the Mac desktop and attach a display before enabling audio."])
-            }
-            let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-            let configuration = SCStreamConfiguration()
-            configuration.width = 2
-            configuration.height = 2
-            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-            configuration.queueDepth = 3
-            configuration.capturesAudio = true
-            configuration.excludesCurrentProcessAudio = true
-            configuration.sampleRate = 48000
-            configuration.channelCount = 2
-            let output = AudioOutput()
-            let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
-            try stream.addStreamOutput(output, type: .audio,
-                                       sampleHandlerQueue: DispatchQueue(label: "dev.simrelay.audio.samples"))
-            try await stream.startCapture()
-            FileHandle.standardError.write(Data("SIM_RELAY_AUDIO_READY\n".utf8))
-            // EOF is host ownership loss, including SIGKILL/crashes. No detached tasks.
-            let input = FileHandle.standardInput
-            for try await _ in input.bytes { }
-            try await stream.stopCapture()
+            try await capture()
         } catch {
             FileHandle.standardError.write(Data("Cannot capture Mac audio. Allow Screen & System Audio Recording for Sim Relay (or its host Terminal) in System Settings, then restart the host. \(error.localizedDescription)\n".utf8))
             exit(1)
         }
+    }
+
+    // Async main is implicitly MainActor-isolated. Older SDKs do not mark SCK's
+    // snapshots Sendable, so consume and release them here, without actor hops.
+    // Only Void crosses back to main; no SDK type gains an unsafe conformance.
+    #if compiler(>=6.2)
+    @concurrent
+    #endif
+    private nonisolated static func capture() async throws {
+        signal(SIGPIPE, SIG_IGN)
+        _ = fcntl(STDOUT_FILENO, F_SETFL, O_NONBLOCK)
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        guard let display = content.displays.first else {
+            throw NSError(domain: "SimRelayAudio", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Log into the Mac desktop and attach a display before enabling audio."])
+        }
+        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+        let configuration = SCStreamConfiguration()
+        configuration.width = 2
+        configuration.height = 2
+        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        configuration.queueDepth = 3
+        configuration.capturesAudio = true
+        configuration.excludesCurrentProcessAudio = true
+        configuration.sampleRate = 48000
+        configuration.channelCount = 2
+        let output = AudioOutput()
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
+        try stream.addStreamOutput(output, type: .audio,
+                                   sampleHandlerQueue: DispatchQueue(label: "dev.simrelay.audio.samples"))
+        try await stream.startCapture()
+        FileHandle.standardError.write(Data("SIM_RELAY_AUDIO_READY\n".utf8))
+        // EOF is host ownership loss, including SIGKILL/crashes. No detached tasks.
+        let input = FileHandle.standardInput
+        for try await _ in input.bytes { }
+        try await stream.stopCapture()
     }
 }
