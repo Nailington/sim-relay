@@ -57,10 +57,16 @@ test(
       directory,
     });
     const sockets: WebSocket[] = [];
+    const identities = new Map<string, string>();
     const post = (route: string, value: unknown, cookie = '', origin = web.origin) =>
       fetch(`${web.origin}/api/${route}`, {
         method: 'POST',
-        headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' },
+        headers: {
+          Origin: origin,
+          Cookie: cookie,
+          'Content-Type': 'application/json',
+          ...(cookie ? { 'X-Sim-Relay-User': encodeURIComponent(identities.get(cookie)!) } : {}),
+        },
         body: JSON.stringify(value),
       });
     try {
@@ -96,7 +102,9 @@ test(
         const cookie = response.headers.get('set-cookie')!;
         assert.match(cookie, /HttpOnly/);
         assert.match(cookie, /SameSite=Strict/);
-        return cookie.split(';')[0];
+        const value = cookie.split(';')[0];
+        identities.set(value, user);
+        return value;
       };
       const alice = await login('alice'),
         bob = await login('bob');
@@ -149,7 +157,7 @@ test(
           ws.once('error', reject);
         });
         await once(ws, 'open');
-        ws.send(JSON.stringify({ profile, udid, fps: 30 }));
+        ws.send(JSON.stringify({ profile, udid, fps: 30, user: identities.get(cookie) }));
         await metadata;
         return ws;
       };
