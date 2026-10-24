@@ -5,15 +5,9 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
-import {
-  hostUrl,
-  pairRemoteClient,
-  probeHost,
-  remoteRequest,
-  tlsOptions,
-} from '../electron/remote';
+import { hostUrl, probeHost, remoteRequest, tlsOptions } from '../electron/remote';
 import { inputSchema } from '../host/protocol';
-import type { Profile, Probe } from '../shared/types';
+import type { Profile } from '../shared/types';
 import { RecordingDownloads } from './recording-download';
 import { mediaControlSchema } from './media-control';
 import { terminalFailure } from '../electron/session';
@@ -29,6 +23,11 @@ const profileSchema = z.object({
 });
 const hash = (value: string) => createHash('sha256').update(value).digest();
 class WebActionError extends Error {}
+class AuthorizationRequired extends Error {}
+const authorizationRequired = {
+  error: 'Sign in to this hosting service again.',
+  code: 'authorization_required',
+};
 function safeError(error: unknown): string {
   if (error instanceof WebActionError) return error.message;
   const message = (error as Error).message ?? '';
@@ -43,6 +42,7 @@ function safeError(error: unknown): string {
   return 'The Mac could not complete this action. Check its address, pairing, and simulator state, then retry.';
 }
 const json = (response: ServerResponse, status: number, data: unknown) => {
+  if (response.destroyed || response.writableEnded) return;
   response.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
   response.end(JSON.stringify(data));
 };
@@ -94,10 +94,40 @@ export async function startWeb(options: WebOptions) {
     return profile;
   };
   const sessions = new Map<string, { user: string; expires: number }>();
+  const expirations = new Map<string, ReturnType<typeof setTimeout>>();
+  const pending = new Map<IncomingMessage, { id: string; revoke(): void }>();
   const loginAttempts = new Map<string, { count: number; start: number }>();
   const browserSockets = new Map<WebSocket, string>();
   const downloads = new RecordingDownloads();
   const relays = new Set<() => void>();
+  const revokeSession = (id: string) => {
+    // Delete ownership before touching transports. A failed response must never
+    // leave credentials, another request, or a stream authorized.
+    sessions.delete(id);
+    clearTimeout(expirations.get(id));
+    expirations.delete(id);
+    for (const [request, active] of pending) {
+      if (active.id !== id) continue;
+      try {
+        active.revoke();
+      } catch {
+        try {
+          request.destroy();
+        } catch {
+          // Keep revoking credentials and the remaining transports.
+        }
+      }
+    }
+    downloads.revoke(id);
+    for (const [socket, owner] of browserSockets) {
+      if (owner !== id) continue;
+      try {
+        socket.terminate();
+      } catch {
+        // Continue revoking the other transports even if one has already failed.
+      }
+    }
+  };
   let origin = options.publicOrigin ? new URL(options.publicOrigin).origin : '';
   if (
     origin &&
@@ -114,18 +144,29 @@ export async function startWeb(options: WebOptions) {
   const session = (request: IncomingMessage) => {
     const id = cookie(request),
       value = id && sessions.get(id);
-    if (!value || value.expires < Date.now()) {
-      if (id) {
-        sessions.delete(id);
-        downloads.revoke(id);
-      }
+    if (!value || value.expires <= Date.now()) {
+      if (id) revokeSession(id);
       return;
     }
-    return { ...value, id: id! };
+    return { value, id: id!, user: value.user, expires: value.expires };
+  };
+  const authorized = (current: NonNullable<ReturnType<typeof session>>) => {
+    if (current.expires <= Date.now()) revokeSession(current.id);
+    return sessions.get(current.id) === current.value && users.has(current.user);
+  };
+  const expectedUser = (request: IncomingMessage) => {
+    const encoded = request.headers['x-sim-relay-user'];
+    if (typeof encoded !== 'string') return;
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return;
+    }
   };
   const validHost = (request: IncomingMessage) => request.headers.host === new URL(origin).host;
   const sameOrigin = (request: IncomingMessage) => request.headers.origin === origin;
   const listener = async (request: IncomingMessage, response: ServerResponse) => {
+    let forgetRequest = () => {};
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
@@ -161,13 +202,21 @@ export async function startWeb(options: WebOptions) {
         const expected = users.get(data.user) ?? hash('invalid-user');
         if (!timingSafeEqual(expected, hash(data.password)) || !users.has(data.user))
           return json(response, 401, { error: 'Check your username and password.' });
-        for (const [id, value] of sessions) if (value.expires < now) sessions.delete(id);
+        const signedInAt = Date.now();
+        for (const [id, value] of sessions) if (value.expires <= signedInAt) revokeSession(id);
+        // Successful login rotates this browser's cookie without revoking other browsers.
+        const previous = cookie(request);
+        if (previous) revokeSession(previous);
         if (sessions.size >= 1000)
           return json(response, 503, {
             error: 'The hosting service has too many active sign-ins. Try again later.',
           });
         const id = randomBytes(32).toString('base64url');
-        sessions.set(id, { user: data.user, expires: now + 12 * 60 * 60 * 1000 });
+        const expires = signedInAt + 12 * 60 * 60 * 1000;
+        sessions.set(id, { user: data.user, expires });
+        const expiry = setTimeout(() => revokeSession(id), expires - signedInAt);
+        expiry.unref();
+        expirations.set(id, expiry);
         response.setHeader(
           'Set-Cookie',
           `simrelay_web=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=43200${origin.startsWith('https:') ? '; Secure' : ''}`,
@@ -175,8 +224,59 @@ export async function startWeb(options: WebOptions) {
         return json(response, 200, { user: data.user });
       }
       if (pathname.startsWith('/api/')) {
-        if (!current)
-          return json(response, 401, { error: 'Sign in to this hosting service again.' });
+        if (!current) return json(response, 401, authorizationRequired);
+        const user = expectedUser(request);
+        if (request.method === 'POST' && user !== current.user)
+          return json(response, 401, authorizationRequired);
+        if (pathname === '/api/logout' && request.method === 'POST') {
+          revokeSession(current.id);
+          response.setHeader(
+            'Set-Cookie',
+            `simrelay_web=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${origin.startsWith('https:') ? '; Secure' : ''}`,
+          );
+          return json(response, 200, { ok: true });
+        }
+        const abort = new AbortController();
+        pending.set(request, {
+          id: current.id,
+          revoke() {
+            abort.abort();
+            if (response.destroyed || response.writableEnded) return;
+            if (response.headersSent) {
+              // An already-started download cannot be replaced with a 401.
+              response.destroy();
+              request.destroy();
+              return;
+            }
+            response.setHeader('Connection', 'close');
+            response.once('finish', () => request.destroy());
+            json(response, 401, authorizationRequired);
+          },
+        });
+        const closed = () => {
+          pending.delete(request);
+          if (!response.writableFinished) abort.abort();
+        };
+        response.once('close', closed);
+        forgetRequest = () => {
+          pending.delete(request);
+          response.off('close', closed);
+        };
+        const authorize = () => {
+          if (
+            abort.signal.aborted ||
+            !authorized(current) ||
+            (request.method === 'POST' && expectedUser(request) !== current.user)
+          )
+            throw new AuthorizationRequired();
+        };
+        // Recheck ownership and dispatch in the same synchronous turn after
+        // every body/probe await. Cancellation cannot undo a command sent earlier.
+        const remote = (profile: Profile, method: string, pathname: string, data?: unknown) => {
+          authorize();
+          return remoteRequest(profile, method, pathname, data, abort.signal);
+        };
+        authorize();
         if (pathname.startsWith('/api/download/') && request.method === 'GET') {
           if (
             !(await downloads.serve(pathname.slice('/api/download/'.length), current.id, response))
@@ -188,56 +288,68 @@ export async function startWeb(options: WebOptions) {
         }
         if (request.method !== 'POST')
           return json(response, 405, { error: 'Use POST for this action.' });
-        if (pathname === '/api/logout') {
-          sessions.delete(current.id);
-          downloads.revoke(current.id);
-          for (const [socket, id] of browserSockets) if (id === current.id) socket.terminate();
-          response.setHeader(
-            'Set-Cookie',
-            `simrelay_web=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${origin.startsWith('https:') ? '; Secure' : ''}`,
-          );
-          return json(response, 200, { ok: true });
-        }
         if (pathname === '/api/upload') {
           const encoded = request.headers['x-sim-relay-profile'];
           if (typeof encoded !== 'string' || encoded.length > 32000)
             throw new Error('Choose a paired Mac before uploading.');
           const profile = getProfile(JSON.parse(Buffer.from(encoded, 'base64').toString()));
           const udid = z.string().uuid().parse(request.headers['x-sim-relay-device']);
-          await remoteRequest(
+          await remote(
             profile,
             'POST',
             `/devices/${udid}/install`,
             await body(request, 128 * 1024 * 1024),
           );
+          authorize();
           return json(response, 200, { ok: true });
         }
         const data = JSON.parse((await body(request)).toString());
+        authorize();
         if (pathname === '/api/recording-download')
           return json(
             response,
             200,
             downloads.issue(current.id, getProfile(data.profile), data.recording, current.expires),
           );
-        if (pathname === '/api/probe')
-          return json(response, 200, await probeHost(checkHost(z.string().parse(data.url))));
+        if (pathname === '/api/probe') {
+          const probe = await probeHost(checkHost(z.string().parse(data.url)));
+          authorize();
+          return json(response, 200, probe);
+        }
         if (pathname === '/api/pair') {
           const profile = getProfile(data.profile);
           // Re-probe the pinned endpoint. Never trust renderer-supplied capability declarations.
-          const probe: Probe = await probeHost(profile.url);
+          const probe = await probeHost(profile.url);
+          authorize();
           if (probe.fingerprint !== profile.fingerprint)
             throw new Error('The Mac certificate changed. Verify its fingerprint and pair again.');
-          const paired = await pairRemoteClient(profile, probe, `${current.user} browser`);
+          let paired = profile;
+          // Use the cancellable request path for both modern and legacy pairing.
+          if (probe.info.clientAuthorization) {
+            const result = JSON.parse(
+              (
+                await remote(profile, 'POST', '/pair', { name: `${current.user} browser` })
+              ).toString(),
+            );
+            authorize();
+            if (typeof result.token !== 'string' || !/^[\w-]{43}$/.test(result.token))
+              throw new Error('The Mac returned an invalid client credential. Pair again.');
+            paired = { ...profile, token: result.token };
+          } else {
+            await remote(profile, 'GET', '/devices');
+            authorize();
+          }
           return json(response, 200, paired);
         }
         if (pathname === '/api/request') {
           const profile = getProfile(data.profile);
-          const result = await remoteRequest(
+          const result = await remote(
             profile,
             z.enum(['GET', 'POST']).parse(data.method),
             z.string().max(8192).parse(data.path),
             data.body,
           );
+          authorize();
           if (/\/screenshot$/.test(data.path)) {
             response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
             response.end(result);
@@ -280,14 +392,18 @@ export async function startWeb(options: WebOptions) {
       });
       response.end(content);
     } catch (error) {
+      if (response.destroyed || response.writableEnded) return;
       if (response.headersSent) {
         response.destroy();
         return;
       }
+      if (error instanceof AuthorizationRequired) return json(response, 401, authorizationRequired);
       // Host errors can contain user paths/credentials. The browser receives a safe next step.
       json(response, 400, {
         error: safeError(error),
       });
+    } finally {
+      forgetRequest();
     }
   };
   const server = options.tls
@@ -322,7 +438,7 @@ export async function startWeb(options: WebOptions) {
       const startup = setTimeout(close, 15_000);
       let alive = true;
       const heartbeat = setInterval(() => {
-        if (!alive || !sessions.has(current.id) || current.expires <= Date.now()) {
+        if (!alive || !authorized(current)) {
           close();
           return;
         }
@@ -335,13 +451,14 @@ export async function startWeb(options: WebOptions) {
       browser.on('error', close);
       browser.once('close', close);
       browser.on('message', (raw, binary) => {
-        if (binary || !sessions.has(current.id)) {
+        if (binary || !authorized(current)) {
           close();
           return;
         }
         try {
           const data = JSON.parse(raw.toString());
           if (!started) {
+            if (data.user !== current.user) throw new AuthorizationRequired();
             started = true;
             const profile = getProfile(data.profile);
             const udid = z.string().uuid().parse(data.udid);
@@ -394,7 +511,13 @@ export async function startWeb(options: WebOptions) {
         } catch (error) {
           if (browser.readyState === WebSocket.OPEN) {
             browser.send(
-              JSON.stringify({ type: 'error', message: safeError(error), terminal: true }),
+              JSON.stringify({
+                type: 'error',
+                ...(error instanceof AuthorizationRequired
+                  ? { code: authorizationRequired.code, message: authorizationRequired.error }
+                  : { message: safeError(error) }),
+                terminal: true,
+              }),
             );
             browser.close(4003);
           } else close();
@@ -415,6 +538,7 @@ export async function startWeb(options: WebOptions) {
     server,
     origin,
     async close() {
+      for (const id of sessions.keys()) revokeSession(id);
       downloads.revoke();
       for (const close of relays) close();
       wss.close();
