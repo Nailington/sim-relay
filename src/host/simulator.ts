@@ -279,7 +279,10 @@ export class SimulatorSession {
           if (dimensions && this.pointSize) {
             // Encoded pixels may be scaled. Input coordinates always use native points.
             const landscape = dimensions.width > dimensions.height;
-            if (dimensions.width !== this.metadata.width || dimensions.height !== this.metadata.height)
+            if (
+              dimensions.width !== this.metadata.width ||
+              dimensions.height !== this.metadata.height
+            )
               this.release();
             this.metadata = {
               ...this.metadata,

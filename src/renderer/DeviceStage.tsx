@@ -211,9 +211,16 @@ export function DeviceStage({
   }, [metadata?.rotation, metadata?.width, metadata?.height]);
   useEffect(() => {
     if (demo || !api || !connected) return;
-    const off = subscribeVideo(api, () => canvas.current, onFps, onError,
-      () => meta.current?.rotation ?? 0);
-    const hidden = () => { if (document.hidden) release(); };
+    const off = subscribeVideo(
+      api,
+      () => canvas.current,
+      onFps,
+      onError,
+      () => meta.current?.rotation ?? 0,
+    );
+    const hidden = () => {
+      if (document.hidden) release();
+    };
     window.addEventListener('blur', release);
     document.addEventListener('visibilitychange', hidden);
     return () => {

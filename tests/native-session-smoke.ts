@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import electron from 'electron';
+import { HostMedia } from '../src/host/media';
+import { AudioCoordinator } from '../src/host/audio';
+import { RecordingStore } from '../src/host/recording';
 import { startHost, type Backend } from '../src/host/server';
 import { remoteRequest, probeHost } from '../src/electron/remote';
 import type { InputEvent, Inventory } from '../src/shared/types';
@@ -21,6 +24,41 @@ const inventory: Inventory = {
   })),
 };
 let starts = 0;
+const captures = new Map(ids.map((id) => [id, { starts: 0, stops: 0, closes: 0 }]));
+const qualities = new Map(ids.map((id) => [id, [] as number[]]));
+let audioStarts = 0,
+  audioCloses = 0;
+const atom = (type: string) => {
+  const data = Buffer.alloc(16);
+  data.writeUInt32BE(16);
+  data.write(type, 4);
+  return data;
+};
+const mp4 = Buffer.concat(['ftyp', 'mdat', 'moov'].map(atom));
+const media = new HostMedia(
+  new RecordingStore(path.join(directory, 'recordings'), async (id, file) => {
+    const trace = captures.get(id)!;
+    trace.starts++;
+    await writeFile(file, mp4);
+    return {
+      stop: async () => {
+        trace.stops++;
+      },
+      abort: async () => {
+        trace.closes++;
+      },
+    };
+  }),
+  new AudioCoordinator(true, async () => {
+    audioStarts++;
+    return {
+      close: async () => {
+        audioCloses++;
+      },
+    };
+  }),
+  true,
+);
 const backend: Backend = {
   inventory: async () => inventory,
   run: async () => '',
@@ -29,6 +67,9 @@ const backend: Backend = {
     return {
       metadata: { width: 400, height: 800, widthPoints: 400, heightPoints: 800 },
       input: (e) => events.get(udid)!.push(e),
+      setVideoSettings: (settings) => {
+        qualities.get(udid)!.push(settings.fps);
+      },
       close: async () => {},
     };
   },
@@ -39,6 +80,7 @@ const host = await startHost({
   bind: '127.0.0.1',
   advertise: false,
   backend,
+  media,
   info: {
     name: 'Native Test Mac',
     platform: 'macOS',
@@ -48,6 +90,7 @@ const host = await startHost({
     companion: true,
   },
 });
+media.capabilities.audio = true;
 const pairingCode = host.status.token!;
 assert.equal(host.status.info?.clientAuthorization, true);
 try {
@@ -116,8 +159,16 @@ try {
   assert.ok(events.get(ids[0])!.some((e) => e.type === 'button' && e.button === 'VOLUME_UP'));
   assert.ok(!events.get(ids[0])!.some((e) => e.type === 'button' && e.button === 'LOCK'));
   assert.ok(events.get(ids[1])!.some((e) => e.type === 'button' && e.button === 'LOCK'));
-  console.log('Native fake-host input routing assertions passed');
+  assert.equal(captures.get(ids[0])!.starts, 1, 'pop-out/return retain the original recording');
+  assert.equal(captures.get(ids[0])!.stops, 1);
+  assert.equal(captures.get(ids[1])!.starts, 1, 'B controls are scoped to B');
+  assert.equal(audioStarts, 1);
+  assert.equal(audioCloses, 1);
+  assert.ok(qualities.get(ids[0])!.includes(10));
+  assert.ok(qualities.get(ids[1])!.includes(5));
+  console.log('Native fake-host input and media ownership assertions passed');
 } finally {
   await host.close();
+  assert.deepEqual(await readdir(media.recordings.directory), []);
   await rm(directory, { recursive: true, force: true });
 }

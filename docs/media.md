@@ -209,7 +209,8 @@ without it. The Nix fileset includes the build script so Linux imports do not fa
 - Mount `<MediaControls api={api} connected={live} maxFps={requestedFps} onError={onError} />`
   once per main/pop-out display. Keep it mounted during connecting so early capability notices
   are not lost. It owns only local controls/playback, never another window's connection. A small
-  App mount is included; the session/window work must mount the same component in DisplayWindow.
+  workspace inspector and pop-out toolbar both mount it. A recording indicator remains visible
+  in each display heading while the secondary media controls are collapsed.
 - DeviceStage uses `subscribeVideo(api, () => canvas.current, onFps, onError)` with cleanup on
   disconnection. Keep its independent pointer/key cleanup and orientation metadata handling.
 - Host Backend sessions optionally implement `setVideoSettings`. `startHost` accepts an injectable
@@ -275,7 +276,11 @@ Dynamic Type and Reduce Motion; actual VoiceOver/large-text runtime checks remai
 
 ## Validation still required before closing issues
 
-Automated here: `npm test` (19 tests), `npm run check`, `npm run build`, and the synthetic benchmark.
+Combined-stack automation: `npm test` (78 tests), `npm run check`, `npm run build`, and real
+headless Electron main/preload/renderer smoke. The latter verifies two pop-outs, retained recording
+across transfers, sender-window media/quality routing, late capture-state replay, and native dialog
+parenting with picker results stubbed. It does not exercise a real OS picker or real audio playback.
+The standalone media suite and synthetic benchmark also remain reproducible.
 Coverage includes quality bounds/recovery/decode feedback, split/hostile PCM framing, local audio
 opt-in/single-owner/startup races, recording idempotency/startup cancellation/finalization/discard,
 graceful process EOF/kill escalation, stale video-RPC suppression/native input coordinates, bounded
