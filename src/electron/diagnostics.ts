@@ -13,6 +13,7 @@ export function createDiagnostics(deps: {
   version: string;
   platform: string;
   profile(id: string): Profile;
+  prepare?(profile: Profile): Promise<Profile>;
   probe(url: string): Promise<{ info: HostInfo; fingerprint: string }>;
   inventory(profile: Profile): Promise<Inventory>;
   now?: () => Date;
@@ -65,6 +66,7 @@ export function createDiagnostics(deps: {
       }
       if (p) {
         try {
+          if (deps.prepare) p = await deps.prepare(p);
           const probe = await deps.probe(p.url);
           set('network', 'passed');
           if (probe.fingerprint !== p.fingerprint) {

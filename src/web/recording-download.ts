@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { z } from 'zod';
-import { hostUrl, tlsOptions } from '../electron/remote';
+import { hostUrl, tlsOptions, selectMacRoute } from '../electron/remote';
 import type { Profile } from '../shared/types';
 
 export const recordingDownloadSchema = z
@@ -65,17 +65,21 @@ export class RecordingDownloads {
     if (this.active.size >= 16) throw new Error('Too many active recording downloads.');
     const abort = new AbortController();
     this.active.set(abort, session);
-    const expiry = setTimeout(() => abort.abort(), Math.max(0, item.sessionExpires - this.now()));
+    const expiry = setTimeout(
+      () => abort.abort(),
+      Math.min(10 * 60_000, Math.max(0, item.sessionExpires - this.now())),
+    );
     const cancel = () => {
       if (!response.writableFinished) abort.abort();
     };
     response.once('close', cancel);
     try {
+      const profile = await selectMacRoute(item.profile, abort.signal);
       await new Promise<void>((resolve, reject) => {
         const request = https.get(
-          new URL(`/recordings/${item.recording.id}`, hostUrl(item.profile.url)),
+          new URL(`/recordings/${item.recording.id}`, hostUrl(profile.url)),
           {
-            ...tlsOptions(item.profile),
+            ...tlsOptions(profile),
             signal: abort.signal,
             timeout: 30_000,
             headers: {

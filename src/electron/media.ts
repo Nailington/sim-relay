@@ -15,7 +15,7 @@ import type {
 } from '../shared/media';
 import { defaultQuality } from '../shared/media';
 import { feedbackSchema, qualitySchema } from '../host/adaptive';
-import { hostUrl, tlsOptions } from './remote';
+import { hostUrl, tlsOptions, selectMacRoute } from './remote';
 
 export async function downloadRecording(
   profile: Profile,
@@ -33,14 +33,16 @@ export async function downloadRecording(
   )
     throw new Error('The host returned invalid recording details.');
   const temporary = `${target}.partial-${randomUUID()}`;
+  const transfer = AbortSignal.any([signal, AbortSignal.timeout(10 * 60_000)]);
   try {
-    signal.throwIfAborted();
+    transfer.throwIfAborted();
+    profile = await selectMacRoute(profile, transfer);
     await new Promise<void>((resolve, reject) => {
       const request = https.get(
         new URL(`/recordings/${recording.id}`, hostUrl(profile.url)),
         {
           ...tlsOptions(profile),
-          signal,
+          signal: transfer,
           timeout: 30000,
           headers: {
             Authorization: `Bearer ${profile.token}`,
@@ -80,7 +82,7 @@ export async function downloadRecording(
             response,
             count,
             createWriteStream(temporary, { flags: 'wx', mode: 0o600 }),
-            { signal },
+            { signal: transfer },
           ).then(
             () =>
               bytes === recording.bytes
@@ -97,7 +99,7 @@ export async function downloadRecording(
       );
       request.on('error', reject);
     });
-    signal.throwIfAborted();
+    transfer.throwIfAborted();
     await rename(temporary, target);
   } finally {
     await rm(temporary, { force: true });

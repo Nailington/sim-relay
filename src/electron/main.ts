@@ -6,7 +6,16 @@ import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { hostname } from 'node:os';
-import { hostUrl, probeHost, remoteRequest, tlsOptions, pairRemoteClient } from './remote';
+import {
+  hostUrl,
+  probeHost,
+  remoteRequest,
+  tlsOptions,
+  pairRemoteClient,
+  selectMacRoute,
+  verifyMacAddress,
+} from './remote';
+import { discoveredMacs, editMacAddress, macAddresses, publicMac } from '../shared/mac-routes';
 import { createServiceManager } from '../host/service-manager';
 import { registerHostManagement } from './host-management';
 import { installHostCommand } from './host-command';
@@ -54,8 +63,7 @@ const hostService = createServiceManager({
 const profiles = new Map<string, Profile>(),
   discovered = new Map<string, HostEntry>();
 let secureStorageAvailable = false;
-const publicProfile = ({ token: _token, certificate: _cert, ...entry }: Profile): HostEntry =>
-  entry;
+const publicProfile = publicMac;
 const profile = (id: string) => {
   const result = profiles.get(id);
   if (!result) throw new Error('Pair with this Mac first.');
@@ -65,6 +73,7 @@ const diagnostics = createDiagnostics({
   version: app.getVersion(),
   platform: process.platform,
   profile,
+  prepare: selectMacRoute,
   probe: probeHost,
   inventory: async (entry) =>
     JSON.parse((await remoteRequest(entry, 'GET', '/devices', undefined, 10000)).toString()),
@@ -87,6 +96,7 @@ async function saveProfiles() {
     const entries = await Promise.all(
       [...profiles.values()].map(async (p) => ({
         ...p,
+        currentRoute: undefined,
         sessionOnly: false,
         token: (await safeStorage.encryptStringAsync(p.token)).toString('base64'),
       })),
@@ -170,7 +180,8 @@ function sessionFor(owner: BrowserWindow) {
       send('notice', notice);
     },
     open: async ({ hostId, udid, fps }, signal) => {
-      const p = profile(hostId);
+      const saved = profile(hostId);
+      const p = await selectMacRoute(saved, signal);
       parseHostInfo(
         JSON.parse((await remoteRequest(p, 'GET', '/info', undefined, signal)).toString()),
       );
@@ -198,7 +209,7 @@ function sessionFor(owner: BrowserWindow) {
       });
       const media = new ClientMedia(
         socket,
-        p,
+        saved,
         (channel, value) => {
           if (mediaBySession.get(session!) === media) send(channel, value);
         },
@@ -358,6 +369,9 @@ async function main() {
       for (const p of entries) {
         try {
           p.token = (await safeStorage.decryptStringAsync(Buffer.from(p.token, 'base64'))).result;
+          p.url = hostUrl(p.url).origin;
+          p.addresses = macAddresses(p);
+          p.currentRoute = undefined;
           profiles.set(p.id, p);
         } catch {
           /* An unavailable keychain requires pairing again. */
@@ -384,11 +398,7 @@ async function main() {
   handle('hosts', () =>
     [...profiles.values()]
       .map(publicProfile)
-      .concat(
-        [...discovered.values()].filter(
-          (d) => ![...profiles.values()].some((p) => p.url === d.url),
-        ),
-      ),
+      .concat(discoveredMacs([...profiles.values()], [...discovered.values()])),
   );
   handle('probe', probeHost);
   handle('diagnostics', (id?: string) => {
@@ -425,21 +435,63 @@ async function main() {
       new X509Certificate(probe.certificate).fingerprint256 !== probe.fingerprint
     )
       throw new Error('Check the certificate and pairing token.');
-    const previous = [...profiles.values()].find((p) => p.url === probe.url);
+    const address = hostUrl(probe.url).origin;
+    const sameMac = [...profiles.values()].find(
+      (p) =>
+        p.fingerprint === probe.fingerprint &&
+        new X509Certificate(p.certificate).raw.equals(new X509Certificate(probe.certificate).raw),
+    );
+    if (sameMac && !macAddresses(sameMac).includes(address)) {
+      await verifyMacAddress(sameMac, address);
+      if (profiles.get(sameMac.id) !== sameMac)
+        throw new Error('Saved pairing changed. Connect to the Mac again.');
+      Object.assign(sameMac, editMacAddress(sameMac, 'add', address));
+      sameMac.sessionOnly = !(await saveProfiles());
+      return publicProfile(sameMac);
+    }
+    const previous = [...profiles.values()].find((p) => macAddresses(p).includes(address));
     let entry: Profile = {
       id: previous?.id ?? randomUUID(),
       name: probe.info.name,
-      url: probe.url,
+      url: sameMac?.url ?? address,
+      addresses: sameMac ? macAddresses(sameMac) : [address],
+      currentRoute: address,
       certificate: probe.certificate,
       fingerprint: probe.fingerprint,
       token: token.trim(),
       source: 'saved',
     };
     entry = await pairRemoteClient(entry, probe, `${hostname()} (${process.platform})`);
+    for (const [, session] of sessions.entries())
+      if (session.target?.hostId === entry.id) session.disconnect();
     profiles.set(entry.id, entry);
     entry.sessionOnly = !(await saveProfiles());
     return publicProfile(entry);
   });
+  for (const action of ['add', 'remove', 'prefer'] as const) {
+    handle(`${action}-address`, async (id: string, value: string) => {
+      const original = profile(id);
+      editMacAddress(original, action, value);
+      if (action === 'add') await verifyMacAddress(original, value);
+      if (profiles.get(id) !== original)
+        throw new Error('Saved pairing changed. Reopen its addresses.');
+      const next = editMacAddress(original, action, value);
+      if (
+        action === 'prefer' ||
+        (action === 'remove' && original.currentRoute === hostUrl(value).origin)
+      ) {
+        for (const [, session] of sessions.entries()) {
+          if (session.target?.hostId !== id) continue;
+          session.disconnect();
+          void mediaBySession.get(session)?.close();
+        }
+      }
+      // Keep the existing profile object live for recording downloads and active displays.
+      Object.assign(original, next);
+      original.sessionOnly = !(await saveProfiles());
+      return publicProfile(original);
+    });
+  }
   handle('forget', async (id: string) => {
     for (const [, session] of sessions.entries())
       if (session.target?.hostId === id) session.disconnect();
