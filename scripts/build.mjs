@@ -2,6 +2,7 @@ import { build } from 'esbuild';
 import { mkdir, copyFile, readFile, writeFile } from 'node:fs/promises';
 import { Resvg } from '@resvg/resvg-js';
 import { buildNativeAudio } from './build-native.mjs';
+import { buildWeb } from './build-web.mjs';
 const icon = new Resvg(await readFile('assets/app-icon.svg', 'utf8'), {
   fitTo: { mode: 'width', value: 1024 },
 });
@@ -33,3 +34,5 @@ await build({
 await mkdir('dist-host', { recursive: true });
 await copyFile('src/host/idb.proto', 'dist-host/idb.proto');
 await buildNativeAudio();
+
+await buildWeb();
