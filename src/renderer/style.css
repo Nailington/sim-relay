@@ -394,29 +394,34 @@ code {
   background: #edf1f7;
   border-radius: 5px;
 }
-.host-menu button,
-.host-menu p {
+.host-menu-actions {
   position: absolute;
   right: 0;
+  top: 36px;
   width: 230px;
-  padding: 12px;
   border: 1px solid var(--line);
   background: #fff;
   z-index: 20;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.host-menu button,
+.host-menu p {
+  display: block;
+  width: 100%;
+  padding: 12px;
   font-size: 12px;
   text-align: left;
 }
 .host-menu button {
-  top: 36px;
-  border-radius: 6px 6px 0 0;
+  background: #fff;
+}
+.host-menu button:last-of-type {
   color: #9d3434;
 }
 .host-menu p {
-  top: 74px;
   margin: 0;
   color: #65748a;
-  border-top: 0;
-  border-radius: 0 0 6px 6px;
 }
 .button {
   display: inline-flex;

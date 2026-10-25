@@ -1,0 +1,37 @@
+.mac-routes {
+  border: 0;
+  margin: 20px 0 0;
+  padding: 0;
+  min-width: 0;
+}
+.mac-routes legend {
+  font-weight: 600;
+  padding: 0 0 8px;
+}
+.mac-route {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.mac-route label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  cursor: pointer;
+}
+.mac-route-url {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.mac-route small {
+  display: block;
+  color: var(--dim);
+  margin-top: 4px;
+}
+.mac-route .button {
+  flex-shrink: 0;
+}

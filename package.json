@@ -105,7 +105,8 @@
           "from": "packaging/services",
           "to": "services"
         }
-      ]
+      ],
+      "executableName": "Sim Relay"
     },
     "win": {
       "target": [

@@ -53,11 +53,13 @@ import { DiagnosticsModal } from './DiagnosticsModal';
 import { explainFailure, redactSecrets } from '../shared/diagnostics';
 import { PairModal, CreateModal, HostModal, ActionModal } from './dialogs';
 import { UpdatesModal, useUpdates } from './UpdatesModal';
+import { MacRoutes } from './MacRoutes';
 
 const empty: Inventory = { devices: [], runtimes: [], devicetypes: [] };
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 type ModalKind =
   | 'diagnostics'
+  | 'routes'
   | 'pair'
   | 'create'
   | 'host'
@@ -186,7 +188,10 @@ export function App() {
       api
         .hosts()
         .then((h) => {
-          if (mounted) setHosts(h);
+          if (mounted) {
+            setHosts(h);
+            setHost((current) => h.find((entry) => entry.id === current?.id) ?? current);
+          }
         })
         .catch((e) => {
           if (mounted) setError(e.message);
@@ -606,8 +611,9 @@ export function App() {
             <Monitor size={17} />
             <strong>{host?.name ?? 'No Mac selected'}</strong>
             {host && (
-              <span className="host-address" title={host.url}>
-                {host.url.replace('https://', '')}
+              <span className="host-address" title={host.currentRoute ?? host.url}>
+                {(host.currentRoute ?? host.url).replace('https://', '')}
+                {host.currentRoute && host.currentRoute !== host.url ? ' (fallback)' : ''}
               </span>
             )}
           </div>
@@ -641,21 +647,26 @@ export function App() {
                 <summary aria-label="Mac options" title="Mac options">
                   <ChevronDown size={16} />
                 </summary>
-                <button
-                  onClick={() =>
-                    void act('Forgetting Mac', async () => {
-                      await api!.forget(host.id);
-                      if (!(await stopStream())) return;
-                      setHost(undefined);
-                      setInventory(empty);
-                      setSelectedId('');
-                      setHosts(await api!.hosts());
-                    })
-                  }
-                >
-                  Forget {host.name}
-                </button>
-                <p>Removes this computer’s saved pairing.</p>
+                <div className="host-menu-actions">
+                  {api?.addAddress && (
+                    <button onClick={() => setModal('routes')}>Manage addresses</button>
+                  )}
+                  <button
+                    onClick={() =>
+                      void act('Forgetting Mac', async () => {
+                        await api!.forget(host.id);
+                        if (!(await stopStream())) return;
+                        setHost(undefined);
+                        setInventory(empty);
+                        setSelectedId('');
+                        setHosts(await api!.hosts());
+                      })
+                    }
+                  >
+                    Forget {host.name}
+                  </button>
+                  <p>Removes this computer’s saved pairing.</p>
+                </div>
               </details>
             )}
           </div>
@@ -1132,6 +1143,17 @@ export function App() {
           fps={fps}
           failureStage={failure?.stage}
           onClose={closeModal}
+        />
+      )}
+      {modal === 'routes' && host && api && (
+        <MacRoutes
+          api={api}
+          host={host}
+          onClose={closeModal}
+          onChanged={(entry) => {
+            setHost(entry);
+            setHosts((entries) => entries.map((value) => (value.id === entry.id ? entry : value)));
+          }}
         />
       )}
       {modal === 'pair' && (

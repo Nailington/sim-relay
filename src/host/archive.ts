@@ -2,6 +2,7 @@ import { unzipSync } from 'fflate';
 import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { RetirementError } from './process';
 
 /** Extract regular files only. Archive paths can never escape the private directory. */
 export async function extractAppArchive(archive: Buffer) {
@@ -46,7 +47,11 @@ export async function extractAppArchive(archive: Buffer) {
       close: () => rm(directory, { recursive: true, force: true }),
     };
   } catch (error) {
-    await rm(directory, { recursive: true, force: true });
+    try {
+      await rm(directory, { recursive: true, force: true });
+    } catch (cleanupError) {
+      throw new RetirementError('App archive cleanup failed.', { cause: cleanupError });
+    }
     throw error;
   }
 }

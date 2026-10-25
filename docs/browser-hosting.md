@@ -61,6 +61,11 @@ The service requires configured users and an explicit allowlist of HTTPS Mac hos
 Add every address clients will enter, including SSH-tunnel addresses if used. This list
 limits the endpoints the relay can probe. Each Mac independently authorizes browser clients.
 
+Saved Macs can have multiple [verified addresses](mac-addresses.md). Allow every
+preferred and fallback address in the runtime hosts list or `SIM_RELAY_WEB_HOSTS`.
+The relay rejects an entire routing set containing a disallowed origin before probing
+or forwarding credentials; client-supplied fallback routes cannot extend this allowlist.
+
 For direct HTTPS, set `cert` and `key` to the browser certificate and private key paths,
 `bind` to `0.0.0.0`, and `origin` to `https://your-server-name:49301`. Browsers must trust
 this certificate, which is separate from each Mac's pinned certificate. Protect key files
