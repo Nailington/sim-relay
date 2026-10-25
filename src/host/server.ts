@@ -28,10 +28,11 @@ import {
 import { MacSimulator, exec, companionExecutable } from './simulator';
 import { inputSchema } from './protocol';
 import { extractAppArchive } from './archive';
+import { RetirementError, retirementDeadline } from './process';
 import type { HostInfo, HostStatus, InputEvent, StreamMeta } from '../shared/types';
 
 export interface Backend {
-  inventory(): ReturnType<MacSimulator['inventory']>;
+  inventory(signal?: AbortSignal): ReturnType<MacSimulator['inventory']>;
   run(
     args: string[],
     binary?: boolean,
@@ -95,7 +96,16 @@ export async function startHost(options: {
   backend?: Backend;
   info?: HostInfo;
   media?: HostMedia;
+  /** A timeout fails shutdown; it never authorizes a retirement acknowledgement. */
+  shutdownTimeoutMs?: number;
 }) {
+  const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 40000;
+  if (
+    !Number.isSafeInteger(shutdownTimeoutMs) ||
+    shutdownTimeoutMs < 1 ||
+    shutdownTimeoutMs > 120000
+  )
+    throw new Error('Choose a host shutdown deadline between 1 and 120000 milliseconds.');
   if (!options.backend && platform() !== 'darwin')
     throw new Error(
       'Hosting requires a Mac with Xcode. You can connect to a Mac from this computer.',
@@ -130,6 +140,23 @@ export async function startHost(options: {
   info.clientAuthorization = true;
   info.protocolVersion = HOST_PROTOCOL_VERSION;
   const cleanupFailures: unknown[] = [];
+  // A response can close long before its handler finishes aborting a process or
+  // removing an extracted archive. Transport bookkeeping cannot join that work.
+  const pendingHandlers = new Set<Promise<unknown>>();
+  const tracked =
+    <Args extends unknown[], T>(handler: (...args: Args) => Promise<T>) =>
+    (...args: Args) => {
+      const work = handler(...args);
+      pendingHandlers.add(work);
+      void work.then(
+        () => pendingHandlers.delete(work),
+        (error) => {
+          pendingHandlers.delete(work);
+          if (error instanceof RetirementError) cleanupFailures.push(error);
+        },
+      );
+      return work;
+    };
   const controllers = new Map<string, WebSocket>();
   const controllerClosers = new Map<string, () => Promise<void>>();
   const clientStreams = new Map<WebSocket, string>();
@@ -138,7 +165,7 @@ export async function startHost(options: {
   const clientRequests = new Map<IncomingMessage, { clientId: string; revoke(): void }>();
   const server = https.createServer(
     { cert: credentials.cert, key: credentials.key, minVersion: 'TLSv1.2' },
-    async (req, res) => {
+    tracked(async (req: IncomingMessage, res: ServerResponse) => {
       if (shuttingDown) return json(res, 503, { error: 'The Mac host is stopping.' });
       // No browser CORS access or cookie authentication. Desktop clients supply a bearer token.
       if (req.headers.origin)
@@ -162,6 +189,7 @@ export async function startHost(options: {
                 .regex(/^[^\x00-\x1f\x7f]+$/),
             })
             .parse(await body(req));
+          if (shuttingDown) return json(res, 503, { error: 'The Mac host is stopping.' });
           return json(res, 201, await clients.pair(req.headers.authorization, name));
         } catch {
           return json(res, 401, {
@@ -222,7 +250,7 @@ export async function startHost(options: {
       // inventory queries, archive extraction, and preceding commands can all yield to revoke.
       const inventory = () => {
         permit();
-        return backend.inventory().then((result) => {
+        return backend.inventory(requestAbort.signal).then((result) => {
           permit();
           return result;
         });
@@ -235,6 +263,7 @@ export async function startHost(options: {
             return result;
           },
           (error) => {
+            if (error instanceof RetirementError) cleanupFailures.push(error);
             permit();
             throw error;
           },
@@ -312,7 +341,11 @@ export async function startHost(options: {
           try {
             await run(['install', udid, archive.appPath]);
           } finally {
-            await archive.close();
+            try {
+              await archive.close();
+            } catch (error) {
+              throw new RetirementError('App archive cleanup failed.', { cause: error });
+            }
           }
           return json(res, 200, { ok: true });
         }
@@ -376,6 +409,7 @@ export async function startHost(options: {
         }
         json(res, 404, { error: 'Unknown host action.' });
       } catch (e) {
+        if (e instanceof RetirementError) cleanupFailures.push(e);
         if (e instanceof AuthorizationRequired) return json(res, 401, authorizationRequired);
         if (e instanceof PermissionDenied) return json(res, 403, permissionDenied);
         const error = e as Error & { stderr?: string };
@@ -384,7 +418,7 @@ export async function startHost(options: {
         forgetRequest();
         res.off('close', forgetRequest);
       }
-    },
+    }),
   );
   server.requestTimeout = 130_000;
   server.headersTimeout = 10_000;
@@ -487,6 +521,7 @@ export async function startHost(options: {
     controllers.set(udid, ws);
     let session: Awaited<ReturnType<Backend['session']>> | undefined;
     let pending: ReturnType<Backend['session']> | undefined;
+    let discovery: ReturnType<Backend['inventory']> | undefined;
     let closing: Promise<void> | undefined;
     let releaseKeepAwake: (() => void) | undefined;
     const peer = new MediaPeer(
@@ -514,6 +549,9 @@ export async function startHost(options: {
           (async () => {
             // A rejected startup owns its own partial cleanup. A returned session
             // must report close failures, including when startup finishes late.
+            await discovery?.catch((error) => {
+              if (error instanceof RetirementError) throw error;
+            });
             const active = session ?? (await pending?.catch(() => undefined));
             await active?.close();
           })(),
@@ -585,7 +623,8 @@ export async function startHost(options: {
     });
     try {
       if (!authorized()) throw new AuthorizationRequired();
-      const device = (await backend.inventory()).devices.find((d) => d.udid.toUpperCase() === udid);
+      discovery = backend.inventory(abort.signal);
+      const device = (await discovery).devices.find((d) => d.udid.toUpperCase() === udid);
       if (!device || device.state !== 'Booted') {
         send({
           type: 'error',
@@ -710,62 +749,74 @@ export async function startHost(options: {
   }
   let closeAdmin: () => Promise<void>;
   try {
-    closeAdmin = await clientAdminServer(options.directory, async (request) => {
-      const data = z
-        .discriminatedUnion('action', [
-          z.object({ action: z.literal('list') }),
-          z.object({ action: z.literal('status') }),
-          z.object({ action: z.literal('keep-awake'), enabled: z.boolean() }),
-          z.object({ action: z.literal('revoke'), id: uuid }),
-          z.object({ action: z.literal('pairing') }),
-          z.object({
-            action: z.literal('permissions'),
-            id: uuid,
-            expectedRevision: z.number().int().nonnegative().safe(),
-            permissions: clientPermissionsSchema,
-          }),
-        ])
-        .parse(request);
-      if (data.action === 'status') {
-        const { token: _token, ...publicStatus } = status;
-        return {
-          ...publicStatus,
-          pid: process.pid,
-          mode: process.env.SIM_RELAY_BACKGROUND === '1' ? 'background' : 'foreground',
-          keepAwake: keepAwake.snapshot(),
-        };
-      }
-      if (data.action === 'keep-awake') {
-        await keepAwake.setEnabled(data.enabled);
-        return keepAwake.snapshot();
-      }
-      if (data.action === 'pairing')
-        return { token: clients.pairingToken, fingerprint: credentials.fingerprint };
-      if (data.action === 'list')
-        return clients.list(
-          (id) => [...clientStreams.values()].filter((value) => value === id).length,
-        );
-      if (data.action === 'permissions') {
-        await clients.setPermissions(data.id, data.expectedRevision, data.permissions);
+    closeAdmin = await clientAdminServer(
+      options.directory,
+      tracked(async (request: unknown) => {
+        if (shuttingDown) throw new Error('The Mac host is stopping.');
+        const data = z
+          .discriminatedUnion('action', [
+            z.object({ action: z.literal('list') }),
+            z.object({ action: z.literal('status') }),
+            z.object({ action: z.literal('keep-awake'), enabled: z.boolean() }),
+            z.object({ action: z.literal('revoke'), id: uuid }),
+            z.object({ action: z.literal('pairing') }),
+            z.object({
+              action: z.literal('permissions'),
+              id: uuid,
+              expectedRevision: z.number().int().nonnegative().safe(),
+              permissions: clientPermissionsSchema,
+            }),
+          ])
+          .parse(request);
+        if (data.action === 'status') {
+          const { token: _token, ...publicStatus } = status;
+          return {
+            ...publicStatus,
+            pid: process.pid,
+            mode: process.env.SIM_RELAY_BACKGROUND === '1' ? 'background' : 'foreground',
+            keepAwake: keepAwake.snapshot(),
+          };
+        }
+        if (data.action === 'keep-awake') {
+          await keepAwake.setEnabled(data.enabled);
+          return keepAwake.snapshot();
+        }
+        if (data.action === 'pairing')
+          return { token: clients.pairingToken, fingerprint: credentials.fingerprint };
+        if (data.action === 'list')
+          return clients.list(
+            (id) => [...clientStreams.values()].filter((value) => value === id).length,
+          );
+        if (data.action === 'permissions') {
+          await clients.setPermissions(data.id, data.expectedRevision, data.permissions);
+          await disconnectClient(data.id);
+          return clients
+            .list((id) => [...clientStreams.values()].filter((value) => value === id).length)
+            .find((client) => client.id === data.id);
+        }
+        await clients.revoke(data.id);
         await disconnectClient(data.id);
-        return clients
-          .list((id) => [...clientStreams.values()].filter((value) => value === id).length)
-          .find((client) => client.id === data.id);
-      }
-      await clients.revoke(data.id);
-      await disconnectClient(data.id);
-      return { revoked: data.id };
-    });
+        return { revoked: data.id };
+      }),
+    );
   } catch (error) {
     shuttingDown = true;
     for (const ws of wss.clients) ws.terminate();
     for (const request of clientRequests.values()) request.revoke();
-    await Promise.allSettled([...streamClosers].map((close) => close()));
-    await keepAwake.close();
-    await new Promise<void>((resolve) => {
+    const networkClosed = new Promise<void>((resolve) => {
       server.close(() => resolve());
       server.closeAllConnections();
     });
+    wss.close();
+    await retirementDeadline(
+      Promise.allSettled([
+        networkClosed,
+        keepAwake.close(),
+        ...[...streamClosers].map((close) => close()),
+        ...pendingHandlers,
+      ]),
+      shutdownTimeoutMs,
+    );
     throw error;
   }
   const port = (server.address() as { port: number }).port;
@@ -807,12 +858,21 @@ export async function startHost(options: {
     close(): Promise<void> {
       return (closingHost ??= (async () => {
         shuttingDown = true;
-        await closeAdmin();
         for (const ws of wss.clients) ws.terminate();
-        for (const request of clientRequests.values()) request.revoke();
-        await Promise.allSettled([...streamClosers].map((close) => close()));
-        await keepAwake.close();
-        await new Promise<void>((resolve) => {
+        for (const request of clientRequests.values()) {
+          try {
+            request.revoke();
+          } catch (error) {
+            cleanupFailures.push(error);
+          }
+        }
+        // Stop accepting work and destroy even unauthenticated/incomplete uploads
+        // before joining handlers. Keep handler ownership after transports disappear.
+        const networkClosed = new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+          server.closeAllConnections();
+        });
+        const advertisementsClosed = new Promise<void>((resolve) => {
           bonjour?.unpublishAll(() => {
             bonjour.destroy();
             resolve();
@@ -820,10 +880,20 @@ export async function startHost(options: {
           if (!bonjour) resolve();
         });
         wss.close();
-        await new Promise<void>((resolve) => {
-          server.close(() => resolve());
-          server.closeAllConnections();
-        });
+        const results = await retirementDeadline(
+          Promise.allSettled([
+            closeAdmin(),
+            networkClosed,
+            advertisementsClosed,
+            keepAwake.close(),
+            ...[...streamClosers].map((close) => close()),
+            ...pendingHandlers,
+          ]),
+          shutdownTimeoutMs,
+        );
+        for (const result of results) {
+          if (result.status === 'rejected') cleanupFailures.push(result.reason);
+        }
         if (cleanupFailures.length)
           throw new AggregateError(cleanupFailures, 'Host resources did not retire cleanly.');
       })());

@@ -1,5 +1,6 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { exec } from './process';
+export { exec } from './process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,6 @@ import { HidDispatcher } from './hid';
 import type { VideoSettings } from '../shared/media';
 import { displayRotation } from '../shared/display';
 
-export const exec = promisify(execFile);
 export const protoPath = () => {
   const directory = typeof __dirname === 'string' ? __dirname : path.resolve('src/host');
   return (
@@ -83,8 +83,8 @@ export class MacSimulator {
     const result = await command;
     return result.stdout;
   }
-  async inventory(): Promise<Inventory> {
-    const list = JSON.parse(String(await this.run(['list', '--json'])));
+  async inventory(signal?: AbortSignal): Promise<Inventory> {
+    const list = JSON.parse(String(await this.run(['list', '--json'], false, undefined, signal)));
     const runtimes = list.runtimes.filter(
       (r: { identifier: string; isAvailable: boolean }) =>
         r.isAvailable && r.identifier.includes('.iOS-'),
