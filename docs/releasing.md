@@ -89,3 +89,12 @@ a new version for corrected binaries, and do not move released tags.
 Nix users can pin `github:Nailington/sim-relay/v0.2.0`, or update their existing `sim-relay`
 input to follow the default branch. Homebrew uses each release's pinned DMG URLs and checksums.
 The flake remains a source build and does not consume the GitHub installers.
+
+New macOS release payloads include `sim-relay-web` and `sim-relay-upgrade`; Linux release
+payloads include `sim-relay-web`. The web server and frontend are built into `dist-web`
+and copied outside app.asar, so launchers use the bundled runtime without source/npm.
+`scripts/package-desktop.mjs` checks the actual unpacked application archive/resources
+for the browser entry point, frontend and excluded private validation assets before
+installer assembly. This is a published packaging check, not a private test runner.
+The existing cask is not modified to link commands missing from an already published
+release; the release generator adds the links with the next matching payload.

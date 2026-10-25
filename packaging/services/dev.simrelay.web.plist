@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>dev.simrelay.web</string>
+<key>ProgramArguments</key><array>
+<string>/Applications/Sim Relay.app/Contents/Resources/bin/sim-relay-web</string>
+<string>serve</string></array>
+<key>EnvironmentVariables</key><dict>
+<key>SIM_RELAY_WEB_CONFIG_FILE</key><string>@HOME@/.config/sim-relay/web.json</string>
+</dict>
+<key>WorkingDirectory</key><string>/</string>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ThrottleInterval</key><integer>10</integer>
+<key>ExitTimeOut</key><integer>30</integer>
+<key>Umask</key><integer>63</integer>
+<key>StandardOutPath</key><string>@HOME@/Library/Logs/Sim Relay/web.log</string>
+<key>StandardErrorPath</key><string>@HOME@/Library/Logs/Sim Relay/web.log</string>
+</dict></plist>

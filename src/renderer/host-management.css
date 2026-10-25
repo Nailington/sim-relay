@@ -1,0 +1,106 @@
+.host-management {
+  color: var(--text);
+}
+.host-service-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.host-service-heading strong {
+  font-size: 15px;
+}
+.host-service-heading small {
+  display: block;
+  color: var(--dim);
+  margin-top: 5px;
+}
+.host-service-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.host-management .checkbox {
+  align-items: flex-start;
+  margin: 14px 0 8px;
+  line-height: 1.5;
+}
+.host-management .checkbox input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.host-management-section {
+  border-top: 1px solid var(--line);
+  margin-top: 22px;
+  padding-top: 18px;
+}
+.host-management-section h3,
+.host-management-section summary {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+.host-management-section summary {
+  cursor: pointer;
+  padding: 3px 0;
+}
+.host-management-section .field {
+  margin-top: 14px;
+}
+.host-power-status {
+  font-size: 12px;
+  color: var(--dim);
+}
+.host-settings-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.host-client-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+.host-client-list > li {
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.host-client-list > li > strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.host-client-list > li > small,
+.host-client-list > li > code {
+  display: block;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.6;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.host-client-access {
+  padding: 0 0 4px;
+}
+.host-client-flags {
+  margin-top: 12px;
+}
+.host-management-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: #20593e;
+  font-size: 12px;
+}
+.host-management-notice svg {
+  margin-top: 3px;
+}
+@media (max-width: 480px) {
+  .host-service-heading {
+    align-items: flex-start;
+  }
+  .host-service-actions .button {
+    flex: 1 1 auto;
+  }
+}

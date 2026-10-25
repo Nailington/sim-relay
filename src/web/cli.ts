@@ -1,66 +1,77 @@
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, access } from 'node:fs/promises';
 import { startWeb } from './server';
+import { webConfig, webOptions } from './config';
+
+declare const SIM_RELAY_WEB_BUNDLED: boolean;
 
 async function main() {
   if (process.argv.includes('--help')) {
     console.log(`Sim Relay browser hosting
-Run npm run build, then npm run web.
+Usage: sim-relay-web [serve]
 
-Required configuration:
-  SIM_RELAY_WEB_USERS       JSON mapping user names to passwords (16+ characters)
+Runtime configuration:
+  SIM_RELAY_WEB_CONFIG_FILE Absolute path to a private JSON file (chmod 600)
+  JSON keys: users, hosts, bind, port, origin, cert, key
+  users maps names to passwords (16+ characters); hosts lists HTTPS Mac origins.
+  cert and key are absolute paths to the browser HTTPS certificate and private key.
+
+Environment overrides:
+  SIM_RELAY_WEB_USERS       JSON mapping of user names to passwords
   SIM_RELAY_WEB_HOSTS       Comma-separated HTTPS Mac host origins
-Optional:
   SIM_RELAY_WEB_PORT        Port (default 49301)
   SIM_RELAY_WEB_BIND        Bind address (default 127.0.0.1)
-  SIM_RELAY_WEB_ORIGIN      Public browser origin, HTTPS for remote access
-  SIM_RELAY_WEB_CERT        HTTPS certificate path (with KEY)
-  SIM_RELAY_WEB_KEY         HTTPS private key path (with CERT)
+  SIM_RELAY_WEB_ORIGIN      Public browser origin; HTTPS for remote access
+  SIM_RELAY_WEB_CERT        Absolute HTTPS certificate path (with KEY)
+  SIM_RELAY_WEB_KEY         Absolute HTTPS private key path (with CERT)
 
-For an HTTPS reverse proxy, bind to loopback and set ORIGIN to its public URL.
-Credentials are browser-local. This service never stores a global workspace.`);
+For an HTTPS reverse proxy, bind to loopback and set origin to its public URL.
+Use systemd or launchd for start, stop, restart, status and logs.
+Browser setups are stored separately on each device and profile.`);
     return;
   }
-  const port = Number(process.env.SIM_RELAY_WEB_PORT ?? 49301);
-  if (!Number.isInteger(port) || port < 1 || port > 65535)
-    throw new Error('SIM_RELAY_WEB_PORT must be between 1 and 65535.');
-  const cert = process.env.SIM_RELAY_WEB_CERT,
-    key = process.env.SIM_RELAY_WEB_KEY;
-  if (!!cert !== !!key) throw new Error('Set both SIM_RELAY_WEB_CERT and SIM_RELAY_WEB_KEY.');
-  let users: Record<string, string>;
+  if (process.argv.slice(2).some((arg) => arg !== 'serve') || process.argv.length > 3)
+    throw new Error('Usage: sim-relay-web [serve]. Run sim-relay-web --help for settings.');
+  const config = await webConfig(process.env);
+  const directory =
+    typeof SIM_RELAY_WEB_BUNDLED !== 'undefined' && SIM_RELAY_WEB_BUNDLED
+      ? path.join(__dirname, 'frontend')
+      : path.resolve(path.dirname(process.argv[1]), '../../dist');
   try {
-    users = JSON.parse(process.env.SIM_RELAY_WEB_USERS ?? '{}');
+    await access(path.join(directory, 'index.html'));
   } catch {
-    throw new Error('SIM_RELAY_WEB_USERS must be a valid JSON mapping of user names to passwords.');
+    throw new Error(
+      'Browser assets are missing. Reinstall Sim Relay, or run npm run build in a source checkout.',
+    );
   }
-  if (
-    !users ||
-    typeof users !== 'object' ||
-    Array.isArray(users) ||
-    Object.values(users).some((value) => typeof value !== 'string')
-  )
-    throw new Error('SIM_RELAY_WEB_USERS must map user names to passwords.');
   const host = await startWeb({
-    port,
-    bind: process.env.SIM_RELAY_WEB_BIND,
-    publicOrigin: process.env.SIM_RELAY_WEB_ORIGIN,
-    users,
-    allowedHosts: (process.env.SIM_RELAY_WEB_HOSTS ?? '').split(',').filter(Boolean),
-    directory: path.resolve('dist'),
-    tls: cert && key ? { cert: await readFile(cert), key: await readFile(key) } : undefined,
+    ...webOptions(config, directory),
+    tls:
+      config.cert && config.key
+        ? { cert: await readFile(config.cert), key: await readFile(config.key) }
+        : undefined,
   });
   console.log(
-    `Sim Relay browser workspace: ${host.origin}\nKeep this service running. Browser setups are stored separately on each device/profile.`,
+    `Sim Relay browser workspace: ${host.origin}\nBrowser setups are stored separately on each device and profile.`,
   );
   let stopping = false;
   for (const signal of ['SIGINT', 'SIGTERM'] as const)
     process.once(signal, () => {
       if (stopping) return;
       stopping = true;
-      void host.close().finally(() => process.exit(0));
+      void host.close().then(
+        () => process.exit(0),
+        () => {
+          console.error(
+            'Browser service cleanup failed. Check the service logs before restarting.',
+          );
+          process.exit(1);
+        },
+      );
     });
 }
 void main().catch((error: Error) => {
+  // JSON parser errors can include passwords. Configuration parsing uses fixed messages.
   console.error(error.message);
   process.exitCode = 1;
 });

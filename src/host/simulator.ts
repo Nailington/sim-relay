@@ -1,5 +1,6 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { exec } from './process';
+export { exec } from './process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -12,7 +13,6 @@ import { HidDispatcher } from './hid';
 import type { VideoSettings } from '../shared/media';
 import { displayRotation } from '../shared/display';
 
-export const exec = promisify(execFile);
 export const protoPath = () => {
   const directory = typeof __dirname === 'string' ? __dirname : path.resolve('src/host');
   return (
@@ -65,9 +65,15 @@ export function companionExecutable() {
   );
 }
 export class MacSimulator {
-  async run(args: string[], binary = false, stdin?: string): Promise<string | Buffer> {
+  async run(
+    args: string[],
+    binary = false,
+    stdin?: string,
+    signal?: AbortSignal,
+  ): Promise<string | Buffer> {
     const command = exec('xcrun', ['simctl', ...args], {
       timeout: 120_000,
+      signal,
       maxBuffer: 32 * 1024 * 1024,
       encoding: binary ? 'buffer' : 'utf8',
       // simctl's pasteboard uses the process locale; SSH sessions may otherwise select Mac Roman.
@@ -77,8 +83,8 @@ export class MacSimulator {
     const result = await command;
     return result.stdout;
   }
-  async inventory(): Promise<Inventory> {
-    const list = JSON.parse(String(await this.run(['list', '--json'])));
+  async inventory(signal?: AbortSignal): Promise<Inventory> {
+    const list = JSON.parse(String(await this.run(['list', '--json'], false, undefined, signal)));
     const runtimes = list.runtimes.filter(
       (r: { identifier: string; isAvailable: boolean }) =>
         r.isAvailable && r.identifier.includes('.iOS-'),
@@ -359,8 +365,8 @@ export class SimulatorSession {
       child.kill('SIGTERM');
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
-          if (child.exitCode === null) child.kill('SIGKILL');
-          resolve();
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+          // The exit listener completes retirement; sending a signal is insufficient.
         }, 1000);
         child.once('exit', () => {
           clearTimeout(timer);

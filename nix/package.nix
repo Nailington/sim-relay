@@ -28,6 +28,7 @@ buildNpmPackage {
       ../index.html
       ../src
       ../scripts/build.mjs
+      ../scripts/build-web.mjs
       ../scripts/build-native.mjs
       ../native
       ../assets/app-icon.svg
@@ -62,7 +63,7 @@ buildNpmPackage {
     npm prune --omit=dev --ignore-scripts
     appDir="$out/share/sim-relay"
     mkdir -p "$appDir/assets" "$appDir/src/host" "$out/bin"
-    cp -R dist dist-electron dist-host node_modules package.json THIRD_PARTY_NOTICES.md "$appDir/"
+    cp -R dist dist-electron dist-host dist-web node_modules package.json THIRD_PARTY_NOTICES.md "$appDir/"
     cp assets/app-icon.png "$appDir/assets/"
     cp src/host/idb.proto "$appDir/src/host/"
   ''
@@ -101,6 +102,8 @@ buildNpmPackage {
     makeWrapper ${lib.getExe nodejs_24} "$out/bin/sim-relay-host" \
       --add-flags "$appDir/dist-host/host.cjs" \
       --prefix PATH : /usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin
+    makeWrapper ${lib.getExe nodejs_24} "$out/bin/sim-relay-web" \
+      --add-flags "$appDir/dist-web/web.cjs"
     runHook postInstall
   '';
 
