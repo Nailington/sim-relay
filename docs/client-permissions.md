@@ -32,7 +32,10 @@ capture grants, available to either role for allowed devices. A video recording
 and its download ticket belong to the authenticated client and device that
 created it; another client's credential cannot redeem the ticket. Revocation or
 any permission edit invalidates live downloads and discards the session's recording.
-Already downloaded content cannot be recalled.
+Ready recordings and download tickets live only while their owning socket remains open.
+Ordinary disconnect also discards them; there is no download-retention grace period.
+Save flows must keep that socket alive until filesystem save completes, or require
+an explicit discard. Already downloaded content cannot be recalled.
 
 Host audio (`hostAudio`) is an explicit, independent grant. It includes playback
 from every app on the Mac, including content outside the device allowlist. It
