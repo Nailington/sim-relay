@@ -2,7 +2,12 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { writeFile, rename, rm } from 'node:fs/promises';
 import { startHost } from './server';
-import { backgroundCommand, serviceStatusFile, serviceRetirementFile, printHostStatus } from './service';
+import {
+  backgroundCommand,
+  serviceStatusFile,
+  serviceRetirementFile,
+  printHostStatus,
+} from './service';
 import packageMetadata from '../../package.json';
 import { createServiceManager } from './service-manager';
 import type { AuthorizedClient } from './clients';
@@ -57,30 +62,44 @@ Only run one host at a time. Stop a foreground host before starting the service.
   const command = args[0] ?? 'serve';
   if (await backgroundCommand(command, args.slice(1))) return;
   const manager = createServiceManager();
-  const directory = command === 'serve'
-    ? path.resolve(process.env.SIM_RELAY_STATE_DIR ?? path.join(homedir(), '.sim-relay'))
-    : await manager.selectedDirectory();
+  const directory =
+    command === 'serve'
+      ? path.resolve(process.env.SIM_RELAY_STATE_DIR ?? path.join(homedir(), '.sim-relay'))
+      : await manager.selectedDirectory();
   if (command === 'permissions') {
-    if (![2,4].includes(args.length)) throw new Error('Use permissions CLIENT_ID or permissions CLIENT_ID EXPECTED_REVISION JSON.');
+    if (![2, 4].includes(args.length))
+      throw new Error('Use permissions CLIENT_ID or permissions CLIENT_ID EXPECTED_REVISION JSON.');
     if (args.length === 2) {
-      const clients = await manager.admin({action:'list'}) as AuthorizedClient[];
-      const client = clients.find(c => c.id === args[1]);
+      const clients = (await manager.admin({ action: 'list' })) as AuthorizedClient[];
+      const client = clients.find((c) => c.id === args[1]);
       if (!client) throw new Error('This client is no longer authorized. Refresh the client list.');
       console.log(JSON.stringify(client, null, 2));
     } else {
       const expectedRevision = Number(args[2]);
-      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new Error('Use the permission revision from permissions CLIENT_ID.');
-      console.log(JSON.stringify(await manager.admin({action:'permissions', id:args[1], expectedRevision, permissions:JSON.parse(args[3])}),null,2));
+      if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
+        throw new Error('Use the permission revision from permissions CLIENT_ID.');
+      console.log(
+        JSON.stringify(
+          await manager.admin({
+            action: 'permissions',
+            id: args[1],
+            expectedRevision,
+            permissions: JSON.parse(args[3]),
+          }),
+          null,
+          2,
+        ),
+      );
     }
     return;
   }
   if (args[0] === 'revoke' && args.length === 2) {
-    await manager.admin( { action: 'revoke', id: args[1] });
+    await manager.admin({ action: 'revoke', id: args[1] });
     console.log('Client access revoked. Its active displays have been disconnected.');
     return;
   }
   if (args[0] === 'clients' && args.length === 1) {
-    const clients = (await manager.admin( { action: 'list' })) as AuthorizedClient[];
+    const clients = (await manager.admin({ action: 'list' })) as AuthorizedClient[];
     if (!clients.length)
       console.log('No authorized clients. Pair a client using the current code.');
     for (const client of clients)
@@ -90,7 +109,7 @@ Only run one host at a time. Stop a foreground host before starting the service.
     return;
   }
   if (args[0] === 'pairing' && args.length === 1) {
-    const value = (await manager.admin( { action: 'pairing' })) as {
+    const value = (await manager.admin({ action: 'pairing' })) as {
       token: string;
       fingerprint: string;
     };
@@ -133,8 +152,12 @@ Only run one host at a time. Stop a foreground host before starting the service.
           try {
             await host.close();
             if (background) {
-              await writeFile(serviceRetirementFile(directory, process.pid), JSON.stringify({pid:process.pid,retired:true}), {mode:0o600});
-              await rm(ready, {force:true});
+              await writeFile(
+                serviceRetirementFile(directory, process.pid),
+                JSON.stringify({ pid: process.pid, retired: true }),
+                { mode: 0o600 },
+              );
+              await rm(ready, { force: true });
             }
             process.exit(0);
           } catch (error) {

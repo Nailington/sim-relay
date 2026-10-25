@@ -57,7 +57,7 @@ export function registerHostManagement(
     manager.admin({
       action: 'permissions',
       id: id.parse(value),
-      expectedRevision: z.number().int().positive().parse(revision),
+      expectedRevision: z.number().int().nonnegative().safe().parse(revision),
       permissions: permissions.parse(scope),
     }),
   );
