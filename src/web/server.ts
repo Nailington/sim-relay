@@ -10,7 +10,10 @@ import { inputSchema } from '../host/protocol';
 import type { Profile } from '../shared/types';
 import { RecordingDownloads } from './recording-download';
 import { mediaControlSchema } from './media-control';
-import { terminalFailure } from '../electron/session';
+import { terminalFailure, SessionFailure } from '../electron/session';
+import { createUpdateChecker } from '../shared/update-checker';
+import packageMetadata from '../../package.json';
+import { recoveryMessages, type RecoveryCode } from '../shared/migration';
 
 const profileSchema = z.object({
   id: z.string().uuid(),
@@ -20,6 +23,7 @@ const profileSchema = z.object({
   certificate: z.string().max(16384),
   token: z.string().min(1).max(256),
   source: z.literal('saved'),
+  authorizationMode: z.enum(['legacy', 'client']).optional(),
 });
 const hash = (value: string) => createHash('sha256').update(value).digest();
 class WebActionError extends Error {}
@@ -30,6 +34,9 @@ const authorizationRequired = {
 };
 function safeError(error: unknown): string {
   if (error instanceof WebActionError) return error.message;
+  const code = (error as { code?: string })?.code;
+  if (code && Object.prototype.hasOwnProperty.call(recoveryMessages, code))
+    return recoveryMessages[code as RecoveryCode];
   const message = (error as Error).message ?? '';
   if (/certificate|fingerprint|CERT_|TLS|SSL/i.test(message))
     return 'The paired Mac certificate could not be verified. Compare the fingerprint on the Mac and pair again only if you trust the new certificate.';
@@ -69,6 +76,12 @@ export interface WebOptions {
 
 /** Stateless Mac credentials: each request supplies only that browser's pinned profile. */
 export async function startWeb(options: WebOptions) {
+  const checkUpdates = createUpdateChecker({
+    currentVersion: packageMetadata.version,
+    platform: 'browser',
+    arch: process.arch,
+    installation: 'web',
+  });
   const users = new Map(
     Object.entries(options.users).map(([name, password]) => {
       if (!name || name.length > 100 || password.length < 16)
@@ -305,6 +318,12 @@ export async function startWeb(options: WebOptions) {
         }
         const data = JSON.parse((await body(request)).toString());
         authorize();
+        if (pathname === '/api/updates') {
+          const channel = z.enum(['stable', 'preview']).parse(data.channel);
+          const result = await checkUpdates(channel);
+          authorize();
+          return json(response, 200, result);
+        }
         if (pathname === '/api/recording-download')
           return json(
             response,
@@ -334,10 +353,24 @@ export async function startWeb(options: WebOptions) {
             authorize();
             if (typeof result.token !== 'string' || !/^[\w-]{43}$/.test(result.token))
               throw new Error('The Mac returned an invalid client credential. Pair again.');
-            paired = { ...profile, token: result.token };
+            paired = { ...profile, token: result.token, authorizationMode: 'client' };
           } else {
-            await remote(profile, 'GET', '/devices');
+            try {
+              await remote(profile, 'GET', '/devices');
+            } catch (error) {
+              if (
+                error instanceof SessionFailure &&
+                ['legacy_pairing', 'authorization_required'].includes(error.code ?? '')
+              )
+                throw new SessionFailure(
+                  recoveryMessages.legacy_code_invalid,
+                  true,
+                  'legacy_code_invalid',
+                );
+              throw error;
+            }
             authorize();
+            paired = { ...profile, authorizationMode: 'legacy' };
           }
           return json(response, 200, paired);
         }

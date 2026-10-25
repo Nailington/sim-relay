@@ -14,8 +14,12 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
     in
     {
+      nixosModules.sim-relay-web = import ./nix/web-service.nix;
+      nixosModules.default = self.nixosModules.sim-relay-web;
+
       overlays.default = final: _prev: {
         sim-relay = final.callPackage ./nix/package.nix { };
+        sim-relay-web = final.callPackage ./nix/web-package.nix { };
       };
 
       packages = forAllSystems (
@@ -25,12 +29,18 @@
         in
         rec {
           sim-relay = pkgs.callPackage ./nix/package.nix { };
+          sim-relay-web = pkgs.callPackage ./nix/web-package.nix { };
           default = sim-relay;
         }
       );
 
       apps = forAllSystems (system: {
         default = self.apps.${system}.sim-relay;
+        sim-relay-web = {
+          type = "app";
+          program = "${self.packages.${system}.sim-relay-web}/bin/sim-relay-web";
+          meta.description = "Serve Sim Relay browser workspaces";
+        };
         sim-relay = {
           type = "app";
           program = "${self.packages.${system}.sim-relay}/bin/sim-relay";
@@ -39,7 +49,7 @@
       });
 
       checks = forAllSystems (system: {
-        inherit (self.packages.${system}) sim-relay;
+        inherit (self.packages.${system}) sim-relay sim-relay-web;
       });
 
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);

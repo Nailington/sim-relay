@@ -8,7 +8,7 @@ framebuffer and send native input over an encrypted connection. No cloud account
 iPhone is required.
 
 For devices without the desktop app, run an authenticated [self-hosted browser service](docs/browser-hosting.md)
-with `npm run web` after building. Each browser keeps its own saved Macs and workspace;
+with the installed `sim-relay-web` command (macOS/Linux releases or Nix). Each browser keeps its own saved Macs and workspace;
 the hosting service relays pinned, authenticated connections to allowlisted Mac hosts.
 
 This is a working first version, **not yet complete parity with the native Mac Simulator**.
@@ -50,7 +50,7 @@ npm run dev
 `npm run dev` opens an Electron window and starts its UI development server. `npm run dev:ui`
 opens only the UI preview, which uses clearly labeled, simulated demo data. Desktop connections
 use Electron's isolated native bridge. For real browser connections, build the app and run the
-[authenticated web service](docs/browser-hosting.md) with `npm run web`; the UI preview alone
+[authenticated web service](docs/browser-hosting.md) with `sim-relay-web` (or `npm run web` in a built source checkout); the UI preview alone
 does not run that relay.
 
 ## Install with Nix
@@ -134,11 +134,12 @@ checkout is needed. See the [macOS guide](docs/macos.md) for details. Source dev
 still use `npm ci` followed by `npm run host`.
 
 To keep sharing after closing Terminal, use `sim-relay-host start`. It runs in the
-background and starts again at login. Use `sim-relay-host status` for pairing details,
+background. Enable login launch explicitly with `sim-relay-host login on`. Use
+`sim-relay-host status` for observed readiness and `sim-relay-host pairing` for the current code,
 `sim-relay-host logs` for recent output, and `sim-relay-host stop` to stop sharing and
 disable starting at login. See [background host setup](docs/macos.md#run-the-host-in-the-background).
 
-Keep the Mac awake and the host running. It shows its address, pairing token, SHA-256
+Keep the Mac available and the host running. It shows its address and SHA-256
 certificate fingerprint, and dependency readiness. Allow incoming connections through the
 Mac's firewall for LAN access. Default port: TCP **49300**. Discovery uses Bonjour/mDNS.
 On macOS, allow Local Network access when requested; see [Apple’s local network privacy guide](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).

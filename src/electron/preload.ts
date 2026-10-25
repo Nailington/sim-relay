@@ -37,6 +37,9 @@ const api: DesktopApi = {
     ipcRenderer.on('recording-close-request', listener);
     return () => ipcRenderer.removeListener('recording-close-request', listener);
   },
+  updatePreferencesKey: 'sim-relay.updates.v1',
+  checkUpdates: (channel) => ipcRenderer.invoke('check-updates', channel),
+  openUpdateLink: (url) => ipcRenderer.invoke('open-update-link', url),
   diagnostics: (id) => ipcRenderer.invoke('diagnostics', id),
   exportDiagnostics: (report) => ipcRenderer.invoke('export-diagnostics', report),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
@@ -99,6 +102,19 @@ const api: DesktopApi = {
     ) => callback(notice);
     ipcRenderer.on('notice', listener);
     return () => ipcRenderer.removeListener('notice', listener);
+  },
+  hostManagement: {
+    status: () => ipcRenderer.invoke('host-management-status'),
+    action: (action) => ipcRenderer.invoke('host-management-action', action),
+    saveSettings: (settings) => ipcRenderer.invoke('host-management-settings', settings),
+    setLogin: (enabled) => ipcRenderer.invoke('host-management-login', enabled),
+    keepAwake: (enabled) => ipcRenderer.invoke('host-management-awake', enabled),
+    pairing: () => ipcRenderer.invoke('host-management-pairing'),
+    copyPairing: () => ipcRenderer.invoke('host-management-copy-pairing'),
+    clients: () => ipcRenderer.invoke('host-management-clients'),
+    revoke: (id) => ipcRenderer.invoke('host-management-revoke', id),
+    permissions: (id, revision, permissions) =>
+      ipcRenderer.invoke('host-management-permissions', id, revision, permissions),
   },
   hostStatus: () => ipcRenderer.invoke('host-status'),
   startHost: () => ipcRenderer.invoke('start-host'),

@@ -1,6 +1,6 @@
 import { RecordingActionCancelled, requestMayLoseRecording } from '../shared/recording-protection';
 import { recordingCloseProtection } from './recording-close';
-import { app, BrowserWindow, ipcMain, safeStorage, dialog, Menu, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, dialog, Menu, clipboard, shell } from 'electron';
 import { Bonjour } from 'bonjour-service';
 import { WebSocket } from 'ws';
 import { randomUUID, X509Certificate } from 'node:crypto';
@@ -9,7 +9,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { hostname } from 'node:os';
 import { hostUrl, probeHost, remoteRequest, tlsOptions, pairRemoteClient } from './remote';
-import { startHost } from '../host/server';
+import { createServiceManager } from '../host/service-manager';
+import { registerHostManagement } from './host-management';
 import { installHostCommand } from './host-command';
 import { createDiagnostics } from './diagnostics';
 import { serializeReport, type DiagnosticStage } from '../shared/diagnostics';
@@ -18,6 +19,8 @@ import type { MediaAction, QualityLimits } from '../shared/media';
 import { inputSchema } from '../host/protocol';
 import { RelaySession, SessionFailure, SessionRouter } from './session';
 import { parseHostInfo } from '../shared/host-info';
+import { createUpdateChecker } from '../shared/update-checker';
+import { releaseLink } from '../shared/updates';
 import type {
   DisplayContext,
   HostEntry,
@@ -38,7 +41,18 @@ const displays = new Map<number, DisplayContext>();
 const sessions = new SessionRouter<number, RelaySession>();
 const identities = new WeakMap<RelaySession, DisplayContext>();
 const mediaBySession = new WeakMap<RelaySession, ClientMedia>();
-let sharing: Awaited<ReturnType<typeof startHost>> | undefined;
+const hostService = createServiceManager({
+  launch: {
+    args: [
+      process.execPath,
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'host/host.cjs')
+        : path.resolve(__dirname, '../dist-host/host.cjs'),
+      'serve',
+    ],
+    workingDirectory: app.getPath('home'),
+  },
+});
 const profiles = new Map<string, Profile>(),
   discovered = new Map<string, HostEntry>();
 let secureStorageAvailable = false;
@@ -90,17 +104,23 @@ async function saveProfiles() {
     return false;
   }
 }
-const recordingClose = recordingCloseProtection((owner) => {
+function windowHasUnsavedRecording(owner: BrowserWindow) {
   const session = sessions.get(owner.id);
   return !!session && !!mediaBySession.get(session)?.hasUnsavedRecording;
-});
+}
+const recordingClose = recordingCloseProtection(windowHasUnsavedRecording);
 async function protectRecordingOwners(action: string, hostId?: string, udid?: string) {
-  const owners = [...windows.values()].filter(
-    (owner) =>
-      (!hostId || sessions.get(owner.id)?.target?.hostId === hostId) &&
-      (!udid || sessions.get(owner.id)?.target?.udid === udid),
-  );
-  if (!(await recordingClose.confirmOwners(owners, action))) throw new RecordingActionCancelled();
+  const owners = () =>
+    [...windows.values()].filter(
+      (owner) =>
+        (!hostId || sessions.get(owner.id)?.target?.hostId === hostId) &&
+        (!udid || sessions.get(owner.id)?.target?.udid === udid),
+    );
+  if (
+    !(await recordingClose.confirmOwners(owners(), action)) ||
+    owners().some(windowHasUnsavedRecording)
+  )
+    throw new RecordingActionCancelled();
 }
 function disconnect(owner: BrowserWindow) {
   canceledSelections.set(owner.id, (canceledSelections.get(owner.id) ?? 0) + 1);
@@ -333,6 +353,18 @@ async function detach(owner: BrowserWindow, context: DisplayContext) {
 }
 async function main() {
   await mkdir(app.getPath('userData'), { recursive: true });
+  const checkUpdates = createUpdateChecker({
+    currentVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    installation: process.execPath.startsWith('/nix/store/') ? 'nix' : 'unknown',
+  });
+  handle('check-updates', checkUpdates);
+  handle('open-update-link', async (url: string) => {
+    if (typeof url !== 'string' || !releaseLink(url))
+      throw new Error('Open an official Sim Relay release link.');
+    await shell.openExternal(url);
+  });
   secureStorageAvailable =
     (await safeStorage.isAsyncEncryptionAvailable().catch(() => false)) &&
     !(
@@ -631,15 +663,19 @@ async function main() {
     const parsed = inputSchema.safeParse(input);
     if (parsed.success) sessions.get(owner.id)?.input(parsed.data);
   });
-  handle('host-status', (): HostStatus => sharing?.status ?? { running: false });
-  handle('start-host', async () => {
-    sharing ??= await startHost({ directory: path.join(app.getPath('userData'), 'host') });
-    return sharing.status;
-  });
+  registerHostManagement(handle, hostService, (action) =>
+    protectRecordingOwners(
+      action === 'restart' ? 'Restart sharing this Mac' : 'Stop sharing this Mac',
+    ),
+  );
+  handle(
+    'host-status',
+    async (): Promise<HostStatus> => (await hostService.status()).host ?? { running: false },
+  );
+  handle('start-host', async () => (await hostService.action('start')).host ?? { running: false });
   handle('stop-host', async () => {
     await protectRecordingOwners('Stop sharing this Mac');
-    await sharing?.close();
-    sharing = undefined;
+    await hostService.action('stop');
   });
   handle(
     'save-screenshot',
@@ -733,7 +769,10 @@ app.on('before-quit', (event) => {
   decidingQuit = true;
   void (async () => {
     // Keep every session alive until each owner has saved or explicitly discarded.
-    if (!(await recordingClose.confirmOwners([...windows.values()], 'Quit Sim Relay'))) {
+    if (
+      !(await recordingClose.confirmOwners([...windows.values()], 'Quit Sim Relay')) ||
+      [...windows.values()].some(windowHasUnsavedRecording)
+    ) {
       decidingQuit = false;
       return;
     }
@@ -744,7 +783,6 @@ app.on('before-quit', (event) => {
       cleanups.push(mediaBySession.get(session)?.close() ?? Promise.resolve());
     }
     discovery?.destroy();
-    cleanups.push(sharing?.close() ?? Promise.resolve());
     await Promise.allSettled(cleanups);
     app.quit();
   })();

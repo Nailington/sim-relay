@@ -6,6 +6,8 @@ export interface HostEntry {
   fingerprint?: string;
   source: 'discovered' | 'saved' | 'demo';
   sessionOnly?: boolean;
+  /** Saved pairing kind is migration guidance, never an authorization decision. */
+  authorizationMode?: 'legacy' | 'client';
 }
 export interface Simulator {
   udid: string;
@@ -113,6 +115,12 @@ export interface HostStatus {
 }
 export interface DesktopApi {
   onRecordingCloseRequest?(callback: (action: string) => Promise<boolean>): () => void;
+  updatePreferencesKey?: string;
+  checkUpdates?(
+    channel: import('./updates').UpdateChannel,
+  ): Promise<import('./updates').UpdateResult>;
+  openUpdateLink?(url: string): Promise<void>;
+  hostManagement?: import('./host-management').HostManagementApi;
   workspace?: {
     restore(): { hostId?: string; deviceId?: string; fps?: number };
     save(value: { hostId?: string; deviceId?: string; fps?: number }): void;

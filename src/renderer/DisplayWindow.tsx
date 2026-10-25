@@ -30,6 +30,7 @@ export function DisplayWindow() {
   useEffect(() => {
     let disposed = false;
     const closeMenus = (event: KeyboardEvent) => {
+      if (document.querySelector('dialog.recording-protection[open]')) return;
       if (event.key === 'Escape')
         document.querySelectorAll<HTMLDetailsElement>('.display-menu[open]').forEach((menu) => {
           menu.open = false;

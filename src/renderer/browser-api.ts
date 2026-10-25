@@ -1,6 +1,7 @@
 import { recordingGuard, invalidateRecordingProtection } from './recording-guard';
 import { RecordingActionCancelled } from '../shared/recording-protection';
 import type { DesktopApi, Profile, Probe, HostEntry, StreamNotice } from '../shared/types';
+import { releaseLink } from '../shared/updates';
 import { browserSession } from './browser-session';
 import { browserDisplays } from './browser-displays';
 import { browserRecording } from './browser-recording';
@@ -54,6 +55,8 @@ export async function clearBrowserWorkspace(user: string): Promise<void> {
     localStorage.setItem(key + '.reset', crypto.randomUUID());
     localStorage.removeItem(key);
     localStorage.removeItem(key + '.preferences');
+    localStorage.removeItem(key + '.updates');
+    localStorage.removeItem(key + '.updates.last');
   });
 }
 class BrowserAuthorizationRequired extends Error {}
@@ -194,6 +197,13 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
     return blob;
   };
   const api: DesktopApi = {
+    updatePreferencesKey: key + '.updates',
+    checkUpdates: (channel) => call('updates', () => ({ channel })),
+    openUpdateLink: async (url) => {
+      account.assertCurrent();
+      if (!releaseLink(url)) throw new Error('Open an official Sim Relay release link.');
+      window.open(url, '_blank', 'noopener,noreferrer');
+    },
     workspace: {
       restore: () => {
         try {

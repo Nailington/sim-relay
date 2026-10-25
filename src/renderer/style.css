@@ -1044,6 +1044,12 @@ h1 {
   display: block;
   margin-bottom: 6px;
 }
+.update-host-info {
+  display: block;
+}
+.update-host-info p + p {
+  margin-top: 8px;
+}
 .inline-error {
   background: #fff1ef;
   color: #973a33;

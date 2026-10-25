@@ -3,6 +3,7 @@ import { X509Certificate } from 'node:crypto';
 import type { Profile, Probe } from '../shared/types';
 import { SessionFailure } from './session';
 import { parseHostInfo } from '../shared/host-info';
+import { remoteRecovery, recoveryMessages } from '../shared/migration';
 
 export function hostUrl(value: string): URL {
   const url = new URL(value.includes('://') ? value : `https://${value}`);
@@ -85,7 +86,7 @@ export async function remoteRequest(
 ): Promise<Buffer> {
   if (
     !['GET', 'POST'].includes(method) ||
-    !/^\/(info|devices(?:\/[^/]+\/(?:boot|shutdown|screenshot|url|location|appearance|install|text))?|command|pair)$/.test(
+    !/^\/(info|permissions|devices(?:\/[^/]+\/(?:boot|shutdown|screenshot|url|location|appearance|install|text))?|command|pair)$/.test(
       pathname,
     )
   )
@@ -126,10 +127,12 @@ export async function remoteRequest(
           if ((res.statusCode ?? 500) >= 400) {
             try {
               const data = JSON.parse(buffer.toString());
+              const recovery = remoteRecovery(profile, pathname, res.statusCode ?? 500, data.code);
               reject(
                 new SessionFailure(
-                  data.error ?? `Host returned HTTP ${res.statusCode}.`,
+                  recovery?.message ?? data.error ?? `Host returned HTTP ${res.statusCode}.`,
                   [401, 403, 404, 409, 426].includes(res.statusCode ?? 0),
+                  recovery?.code ?? data.code,
                 ),
               );
             } catch {
@@ -154,13 +157,22 @@ export async function pairRemoteClient(
   clientName: string,
 ): Promise<Profile> {
   if (!probe.info.clientAuthorization) {
-    await remoteRequest(profile, 'GET', '/devices');
-    return profile;
+    try {
+      await remoteRequest(profile, 'GET', '/devices');
+    } catch (error) {
+      if (
+        error instanceof SessionFailure &&
+        ['legacy_pairing', 'authorization_required'].includes(error.code ?? '')
+      )
+        throw new SessionFailure(recoveryMessages.legacy_code_invalid, true, 'legacy_code_invalid');
+      throw error;
+    }
+    return { ...profile, authorizationMode: 'legacy' };
   }
   const result = JSON.parse(
     (await remoteRequest(profile, 'POST', '/pair', { name: clientName })).toString(),
   );
   if (typeof result.token !== 'string' || !/^[\w-]{43}$/.test(result.token))
     throw new Error('The Mac returned an invalid client credential. Pair again.');
-  return { ...profile, token: result.token };
+  return { ...profile, token: result.token, authorizationMode: 'client' };
 }

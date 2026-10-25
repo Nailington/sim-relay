@@ -51,6 +51,18 @@ export function useRecordingProtection(raw?: DesktopApi) {
     };
     return {
       ...raw,
+      hostManagement: raw.hostManagement
+        ? {
+            ...raw.hostManagement,
+            action: (action) =>
+              action === 'start'
+                ? raw.hostManagement!.action(action)
+                : run(
+                    action === 'restart' ? 'Restart sharing this Mac' : 'Stop sharing this Mac',
+                    () => raw.hostManagement!.action(action),
+                  ),
+          }
+        : undefined,
       disconnect: () => run('Disconnect this display', () => raw.disconnect()),
       retry: () => run('Retry this connection', () => raw.retry()),
       forget: (id) => run('Forget this Mac', () => raw.forget(id)),

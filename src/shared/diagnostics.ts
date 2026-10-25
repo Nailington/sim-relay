@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recoveryAdvice } from './migration';
 
 export const stages = [
   'network',
@@ -76,6 +77,8 @@ const advice: Record<DiagnosticStage, { title: string; next: string }> = {
 };
 export function explainFailure(error: unknown, fallback: DiagnosticStage = 'network') {
   const message = error instanceof Error ? error.message : String(error);
+  const recovery = recoveryAdvice(message);
+  if (recovery) return recovery;
   let stage = fallback;
   if (/certificate|fingerprint|self.signed|CERT_|TLS|SSL/i.test(message)) stage = 'tls';
   else if (/ENOTFOUND|ECONNREFUSED|EHOST|ENET|ETIMEDOUT/i.test(message)) stage = 'network';
