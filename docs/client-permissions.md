@@ -92,6 +92,9 @@ grant in place; refresh before retrying. Already dispatched simctl processes rec
 an abort signal, and subsequent commands and response bytes are blocked. Completed
 side effects cannot be undone by revocation. A custom backend must honor the
 optional `run`/`session` abort signal to cancel its own pending work.
+A custom session backend must retire partial resources before rejecting startup.
+If cleanup cannot establish retirement, reject with `RetirementError` from
+`src/host/process.ts`; shutdown preserves that failure and cannot acknowledge a safe upgrade.
 
 ## Administrator and GUI contract
 

@@ -24,6 +24,12 @@ its application commit. A public checkout cannot reproduce a missing private bun
 
 ## Current evidence and scope
 
+- **Passed — final integrated Linux implementation and packaging checks.** At
+  `e898219`, 185 private regressions, the production build, applicable built-app
+  smokes, actual Linux payload/launcher checks and both Linux Nix packages pass.
+  The review-found startup-retirement and Nix host-layout defects are fixed.
+  [Candidate commit, suite digest, review dispositions and limits](validation-integrated-2026-10-25.md).
+
 - **Passed — Linux foundation regressions, not native acceptance.** At integrated
   `0e2d049`, 148 private regressions, type-check/build and the actual built React,
   Chromium-account and Electron window-routing smokes passed. The independently
