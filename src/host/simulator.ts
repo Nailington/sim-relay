@@ -65,9 +65,15 @@ export function companionExecutable() {
   );
 }
 export class MacSimulator {
-  async run(args: string[], binary = false, stdin?: string): Promise<string | Buffer> {
+  async run(
+    args: string[],
+    binary = false,
+    stdin?: string,
+    signal?: AbortSignal,
+  ): Promise<string | Buffer> {
     const command = exec('xcrun', ['simctl', ...args], {
       timeout: 120_000,
+      signal,
       maxBuffer: 32 * 1024 * 1024,
       encoding: binary ? 'buffer' : 'utf8',
       // simctl's pasteboard uses the process locale; SSH sessions may otherwise select Mac Roman.
@@ -359,8 +365,8 @@ export class SimulatorSession {
       child.kill('SIGTERM');
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
-          if (child.exitCode === null) child.kill('SIGKILL');
-          resolve();
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+          // The exit listener completes retirement; sending a signal is insufficient.
         }, 1000);
         child.once('exit', () => {
           clearTimeout(timer);
