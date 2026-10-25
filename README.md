@@ -197,18 +197,23 @@ for the cleanup inventory, report contents, and validation limits.
 - **Install app** transfers a ZIP containing one simulator `.app` from any client OS.
   Build for the simulator, not a physical device. On a Mac, create an archive with
   `ditto -c -k --keepParent MyApp.app MyApp.app.zip`. Limits: 128 MB compressed, 512 MB expanded,
-  20,000 files. Archive symlinks become regular files. Install bundles that require symlinks
-  directly from the Mac filesystem using the command panel.
-- **Command** (Ctrl+K / Cmd+K) runs `simctl` arguments directly, without a shell.
-  `$DEVICE` means the selected simulator. Launch/uninstall apps, send notifications, change
-  permissions, import media, or use other finite `simctl` operations. Paths refer to the Mac.
-  Erase/delete commands require a checkbox. Commands time out after two minutes.
+  20,000 files. Archive symlinks become regular files; bundles requiring preserved symlinks
+  need installation locally on the Mac outside Sim Relay.
+- **Command** (Ctrl+K / Cmd+K) runs a restricted set of `simctl` arguments without a shell,
+  when the Mac owner grants raw-command access. `$DEVICE` means the selected simulator.
+  Supported commands include launching apps, appearance, location and non-file deep links.
+  Host paths, arbitrary subcommands and global device aliases are rejected. Erase/delete
+  also require destructive permission and confirmation. See the exact
+  [command and permission rules](docs/client-permissions.md#raw-commands-and-host-paths).
 - `/` focuses simulator search when outside text fields and the simulator display.
 
-Each simulator permits one controlling client at a time. Separate simulators can have separate
+Each simulator permits one viewer or controller display at a time. Separate simulators can have separate
 clients. Disconnecting leaves the simulator running; **Shut down simulator** powers it off.
 
 ## Current limits
+
+The [release acceptance ledger](docs/release-acceptance.md) separates measured results
+from outstanding native, browser, platform and upgrade checks for the pending release.
 
 - Arbitrary simultaneous multi-finger paths, two-finger twist/rotation gestures, pressure,
   and stylus input are not implemented. The public idb streaming protocol used here exposes
@@ -238,25 +243,30 @@ Manage access locally on the Mac with `sim-relay-host clients`,
 `sim-relay-host revoke CLIENT_ID`, and `sim-relay-host pairing` (or `npm run host -- clients`
 when running from source). Revoking a client closes its active displays and prevents reuse of
 its credential; other clients stay connected. Use the same `SIM_RELAY_STATE_DIR` as the host.
-See [client authorization](docs/client-authorization.md) for migration, desktop-host paths,
-and the local administrator interface.
+The desktop **Host management** panel manages the same saved background service and state
+directory as the CLI. Use it to grant device/action access, rotate the pairing code, or revoke
+a client. See [host management](docs/host-management.md) and
+[client permissions](docs/client-permissions.md) for configuration, migration and access rules.
 
 HTTPS works with local and Tailscale IP addresses: each Mac generates its own self-signed
 certificate, so it does not need a public domain or a certificate authority. A browser may
 warn about that certificate; Sim Relay pairs by comparing its fingerprint on both devices.
 Connection compatibility uses an API protocol version independently of the app release
 number. New hosts use protocol 2 for individual client authorization. Updated clients can
-also connect to protocol 1 hosts, including releases `0.1.0` through `0.1.3`, which advertised
+also connect to protocol 1 hosts, including releases `0.1.0` through `0.1.5`, which advertised
 only an app version. Upgrading a host invalidates existing shared-token pairings; update
 clients and pair them again. Protocol 1 hosts retain their original shared-token behavior.
 
-Pairing grants simulator management access as the Mac user, including simulator commands.
-Give the token only to trusted clients. Saved client tokens use operating-system encryption.
+New pairings start as viewers with no devices or optional actions. The Mac owner must grant
+access locally. Existing version 1 client records migrate with their previous broad access
+made explicit; review those grants after upgrading. Give pairing codes only to intended clients.
+Saved client credentials use operating-system encryption.
 Without secure storage, pairing stays in memory for that session; plaintext persistence is disabled.
 
-CLI host state lives in `~/.sim-relay`; desktop host state lives under Electron's user-data
-directory. To revoke paired clients, stop sharing and remove the host's `token` file; starting
-again generates a new token. Replacing the host certificate requires pairing again.
+The GUI and CLI select the same saved host configuration and state directory. Migration from
+older foreground/desktop hosts is described in the host-management guide. Revoke access using
+the local client controls; deleting or rotating the pairing-code file does not revoke issued
+client credentials. Replacing the host certificate requires fingerprint verification and pairing again.
 
 Host variables: `SIM_RELAY_PORT`, `SIM_RELAY_BIND`, `SIM_RELAY_STATE_DIR`, `IDB_COMPANION_PATH`.
 Clients do not need Xcode or idb.

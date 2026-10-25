@@ -17,5 +17,5 @@ Nix or another package manager. Background-host and browser-service upgrades int
 sessions; save recordings first and use the documented service handoff.
 
 See [the upgrade guide](upgrading.md), [private validation policy](private-validation.md)
-and release acceptance evidence before publishing. This file describes unreleased
+and [release acceptance ledger](release-acceptance.md) before publishing. This file describes unreleased
 work; native behavior must not be inferred from build or injected-backend checks.
