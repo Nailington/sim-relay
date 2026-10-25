@@ -1,3 +1,5 @@
+import { RecordingActionCancelled, requestMayLoseRecording } from '../shared/recording-protection';
+import { recordingCloseProtection } from './recording-close';
 import { app, BrowserWindow, ipcMain, safeStorage, dialog, Menu, clipboard } from 'electron';
 import { Bonjour } from 'bonjour-service';
 import { WebSocket } from 'ws';
@@ -87,6 +89,18 @@ async function saveProfiles() {
     secureStorageAvailable = false;
     return false;
   }
+}
+const recordingClose = recordingCloseProtection((owner) => {
+  const session = sessions.get(owner.id);
+  return !!session && !!mediaBySession.get(session)?.hasUnsavedRecording;
+});
+async function protectRecordingOwners(action: string, hostId?: string, udid?: string) {
+  const owners = [...windows.values()].filter(
+    (owner) =>
+      (!hostId || sessions.get(owner.id)?.target?.hostId === hostId) &&
+      (!udid || sessions.get(owner.id)?.target?.udid === udid),
+  );
+  if (!(await recordingClose.confirmOwners(owners, action))) throw new RecordingActionCancelled();
 }
 function disconnect(owner: BrowserWindow) {
   canceledSelections.set(owner.id, (canceledSelections.get(owner.id) ?? 0) + 1);
@@ -283,6 +297,7 @@ function createWindow(display = false) {
     },
   });
   windows.set(owner.id, owner);
+  recordingClose.protect(owner);
   owner.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   owner.webContents.on('will-navigate', (event) => event.preventDefault());
   owner.webContents.on('will-attach-webview', (event) => event.preventDefault());
@@ -415,6 +430,7 @@ async function main() {
     return publicProfile(entry);
   });
   handle('forget', async (id: string) => {
+    await protectRecordingOwners('Forget this Mac', id);
     for (const [, session] of sessions.entries())
       if (session.target?.hostId === id) session.disconnect();
     profiles.delete(id);
@@ -430,9 +446,15 @@ async function main() {
       await writeFile(file, JSON.stringify(entries.filter((p) => p.id !== id)), { mode: 0o600 });
     }
   });
-  handle('request', async (id: string, method: string, pathname: string, body?: unknown) =>
-    JSON.parse((await remoteRequest(profile(id), method, pathname, body)).toString()),
-  );
+  handle('request', async (id: string, method: string, pathname: string, body?: unknown) => {
+    if (requestMayLoseRecording(method, pathname, body))
+      await protectRecordingOwners(
+        'Run this simulator action',
+        id,
+        /^\/devices\/([^/]+)\//.exec(pathname)?.[1],
+      );
+    return JSON.parse((await remoteRequest(profile(id), method, pathname, body)).toString());
+  });
   handle(
     'connect',
     async (owner: BrowserWindow, id: string, udid: string, fps: number) => {
@@ -615,6 +637,7 @@ async function main() {
     return sharing.status;
   });
   handle('stop-host', async () => {
+    await protectRecordingOwners('Stop sharing this Mac');
     await sharing?.close();
     sharing = undefined;
   });
@@ -701,17 +724,28 @@ app
     app.quit();
   });
 let quitting = false;
+let decidingQuit = false;
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
-  quitting = true;
-  const cleanups: Promise<unknown>[] = [];
-  for (const [, session] of sessions.entries()) {
-    session.disconnect();
-    cleanups.push(mediaBySession.get(session)?.close() ?? Promise.resolve());
-  }
-  discovery?.destroy();
-  cleanups.push(sharing?.close() ?? Promise.resolve());
-  void Promise.allSettled(cleanups).finally(() => app.quit());
+  if (decidingQuit) return;
+  decidingQuit = true;
+  void (async () => {
+    // Keep every session alive until each owner has saved or explicitly discarded.
+    if (!(await recordingClose.confirmOwners([...windows.values()], 'Quit Sim Relay'))) {
+      decidingQuit = false;
+      return;
+    }
+    quitting = true;
+    const cleanups: Promise<unknown>[] = [];
+    for (const [, session] of sessions.entries()) {
+      session.disconnect();
+      cleanups.push(mediaBySession.get(session)?.close() ?? Promise.resolve());
+    }
+    discovery?.destroy();
+    cleanups.push(sharing?.close() ?? Promise.resolve());
+    await Promise.allSettled(cleanups);
+    app.quit();
+  })();
 });

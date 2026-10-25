@@ -1,3 +1,5 @@
+import { RecordingProtection, useRecordingProtection } from './RecordingProtection';
+import { recordingActionCancelled } from '../shared/recording-protection';
 import type { RecordingStatus } from '../shared/media';
 import { useCallback, useEffect, useState } from 'react';
 import { Camera, House, Maximize2, RotateCw } from 'lucide-react';
@@ -9,7 +11,8 @@ import { Busy, IconButton } from './components';
 
 type Action = 'url' | 'text' | 'location' | 'command';
 export function DisplayWindow() {
-  const api = window.relay!;
+  const { api: protectedApi, guard } = useRecordingProtection(window.relay!);
+  const api = protectedApi!;
   const [context, setContext] = useState<DisplayContext>();
   const [recordingStatus, setRecordingStatus] = useState<RecordingStatus>({ phase: 'idle' });
   const [adaptive, setAdaptive] = useState(false);
@@ -92,7 +95,7 @@ export function DisplayWindow() {
     try {
       await action();
     } catch (e) {
-      setError((e as Error).message);
+      if (!recordingActionCancelled(e)) setError((e as Error).message);
     } finally {
       setBusy('');
     }
@@ -113,6 +116,7 @@ export function DisplayWindow() {
     api.request(context!.host.id, 'POST', `/devices/${context!.device.udid}/${action}`, body);
   const connect = () =>
     act('Connecting display', async () => {
+      if (guard && !(await guard.confirm('Connect this display'))) return;
       if (context!.device.state !== 'Booted') {
         await request('boot');
         setContext({ ...context!, device: { ...context!.device, state: 'Booted' } });
@@ -122,6 +126,7 @@ export function DisplayWindow() {
   if (!context)
     return (
       <div className="display-window">
+        <RecordingProtection guard={guard} />
         <p role="status">{error || 'Opening simulator display…'}</p>
         <div hidden>
           <MediaControls api={api} connected={false} onError={reportError} />
@@ -131,6 +136,7 @@ export function DisplayWindow() {
   const disabled = status !== 'live' || !!busy;
   return (
     <main className="display-window">
+      <RecordingProtection guard={guard} />
       <header
         className="display-toolbar"
         aria-label="Simulator controls"
@@ -289,11 +295,13 @@ export function DisplayWindow() {
                   }
                   onChange={(e) => {
                     const rate = Number(e.target.value);
-                    setRequested(rate);
-                    if (status === 'live')
-                      void act('Changing stream quality', () =>
-                        api.connect(context.host.id, context.device.udid, rate),
-                      );
+                    if (status !== 'live') setRequested(rate);
+                    else
+                      void act('Changing stream quality', async () => {
+                        if (guard && !(await guard.confirm('Change the frame rate'))) return;
+                        await api.connect(context.host.id, context.device.udid, rate);
+                        setRequested(rate);
+                      });
                   }}
                 >
                   {[15, 30, 60].map((rate) => (
@@ -335,8 +343,8 @@ export function DisplayWindow() {
                 disabled={!!busy}
                 onClick={() =>
                   void act('Shutting down simulator', async () => {
-                    await api.disconnect();
                     await request('shutdown');
+                    await api.disconnect();
                     setContext({ ...context, device: { ...context.device, state: 'Shutdown' } });
                   })
                 }

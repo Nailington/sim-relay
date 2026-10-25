@@ -1,3 +1,5 @@
+import { recordingGuard, invalidateRecordingProtection } from './recording-guard';
+import { RecordingActionCancelled } from '../shared/recording-protection';
 import type { DesktopApi, Profile, Probe, HostEntry, StreamNotice } from '../shared/types';
 import { browserSession } from './browser-session';
 import { browserDisplays } from './browser-displays';
@@ -15,6 +17,7 @@ const lifetimes = new WeakMap<DesktopApi, () => void>();
 const accounts = new WeakMap<DesktopApi, BrowserAccount>();
 export function disposeBrowserApi(api?: DesktopApi) {
   if (api) {
+    invalidateRecordingProtection(api);
     lifetimes.get(api)?.();
     lifetimes.delete(api);
   }
@@ -23,6 +26,8 @@ export async function signOutBrowserApi(api: DesktopApi) {
   const account = accounts.get(api);
   if (!account) throw new Error('Open this workspace again to sign out.');
   await account.verify();
+  if (!(await recordingGuard(api).confirm('Sign out'))) throw new RecordingActionCancelled();
+  account.assertCurrent();
   announceBrowserAccount();
   await webCall('logout', {}, account.user);
   disposeBrowserApi(api);
@@ -31,6 +36,9 @@ export async function resetBrowserApi(api: DesktopApi) {
   const account = accounts.get(api);
   if (!account) throw new Error('Open this workspace again before clearing its saved setup.');
   await account.verify();
+  if (!(await recordingGuard(api).confirm('Clear saved setup')))
+    throw new RecordingActionCancelled();
+  account.assertCurrent();
   await api.disconnect();
   account.assertCurrent();
   await clearBrowserWorkspace(account.user);
@@ -93,6 +101,7 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
   const lifetime = new AbortController();
   let stop = () => {};
   const account = createBrowserAccount(user, lifetime.signal, () => {
+    invalidateRecordingProtection(api);
     stop();
     lifetime.abort();
     onInvalidated?.();
@@ -393,7 +402,7 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
   });
   const release = () => {
     // Current hosts support release; older hosts receive the explicit UP events from DeviceStage.
-    if (document.visibilityState === 'hidden') void disconnect();
+    if (document.visibilityState === 'hidden') session.input({ type: 'release' });
   };
   document.addEventListener('visibilitychange', release, { signal: lifetime.signal });
   window.addEventListener(

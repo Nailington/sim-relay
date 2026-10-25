@@ -1,3 +1,4 @@
+import { recordingActionCancelled } from '../shared/recording-protection';
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   ArrowRight,
@@ -226,6 +227,7 @@ export function CreateModal({
               runtime,
             });
           } catch (e) {
+            if (recordingActionCancelled(e)) return;
             const failure = explainFailure(e, 'action');
             setError(
               `${failure.title}. ${failure.next} Technical details: ${redactSecrets((e as Error).message)}`,
@@ -440,6 +442,7 @@ export function HostModal({ api, onClose }: { api?: DesktopApi; onClose(): void 
                     setStatus({ running: false });
                   } else setStatus(await api!.startHost());
                 } catch (e) {
+                  if (recordingActionCancelled(e)) return;
                   const failure = explainFailure(e, 'companion');
                   setError(
                     `${failure.title}. ${failure.next} Technical details: ${redactSecrets((e as Error).message)}`,
@@ -573,6 +576,7 @@ export function ActionModal({
               onClose();
             }
           } catch (e) {
+            if (recordingActionCancelled(e)) return;
             const failure = explainFailure(e, 'action');
             setError(
               `${failure.title}. ${failure.next} Technical details: ${redactSecrets((e as Error).message)}`,

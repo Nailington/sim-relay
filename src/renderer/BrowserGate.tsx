@@ -1,3 +1,4 @@
+import { recordingActionCancelled } from '../shared/recording-protection';
 import { useEffect, useRef, useState } from 'react';
 import { App } from './App';
 import { DisplayWindow } from './DisplayWindow';
@@ -191,7 +192,8 @@ export function BrowserGate() {
                 if (!relay.current) setMode('login');
               })
               .catch((failure: Error) => {
-                if (!relay.current || relay.current === api) setError(failure.message);
+                if (!recordingActionCancelled(failure) && (!relay.current || relay.current === api))
+                  setError(failure.message);
               })
               .finally(() => setBusy(false));
           }}
@@ -216,11 +218,12 @@ export function BrowserGate() {
               if (!api) return;
               void resetBrowserApi(api)
                 .then(() => location.reload())
-                .catch(() =>
-                  setError(
-                    'Browser storage could not be cleared. Clear this site’s data in your browser settings.',
-                  ),
-                );
+                .catch((failure: Error) => {
+                  if (!recordingActionCancelled(failure))
+                    setError(
+                      'Browser storage could not be cleared. Clear this site’s data in your browser settings.',
+                    );
+                });
             }}
           >
             Clear this browser’s setup

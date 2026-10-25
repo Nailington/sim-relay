@@ -112,6 +112,7 @@ export interface HostStatus {
   addresses?: string[];
 }
 export interface DesktopApi {
+  onRecordingCloseRequest?(callback: (action: string) => Promise<boolean>): () => void;
   workspace?: {
     restore(): { hostId?: string; deviceId?: string; fps?: number };
     save(value: { hostId?: string; deviceId?: string; fps?: number }): void;

@@ -1,3 +1,5 @@
+import { RecordingProtection, useRecordingProtection } from './RecordingProtection';
+import { RecordingActionCancelled, recordingActionCancelled } from '../shared/recording-protection';
 import type { RecordingStatus } from '../shared/media';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -66,7 +68,7 @@ type ModalKind =
   | null;
 
 export function App() {
-  const api = window.relay;
+  const { api, guard } = useRecordingProtection(window.relay);
   const [demo, setDemo] = useState(!api);
   const [hosts, setHosts] = useState<HostEntry[]>([]);
   const [host, setHost] = useState<HostEntry | undefined>(!api ? demoHosts[0] : undefined);
@@ -271,24 +273,29 @@ export function App() {
     return value;
   };
   const stopStream = async () => {
+    try {
+      await api?.disconnect();
+    } catch (error) {
+      if (!recordingActionCancelled(error)) setError((error as Error).message);
+      return false;
+    }
     selectionGeneration.current++;
     connectionAttempt.current++;
-    await api?.disconnect();
     setStream('off');
     setConnectionStatus('');
     setCanRetry(false);
     setMetadata(undefined);
     setFps(0);
+    return true;
   };
   const chooseHost = async (entry: HostEntry) => {
     if (busy) return;
-    selectionGeneration.current++;
     if (entry.source === 'discovered') {
       setPairUrl(entry.url);
       setModal('pair');
       return;
     }
-    await stopStream();
+    if (!(await stopStream())) return;
     setError('');
     setHost(entry);
     currentHost.current = entry.id;
@@ -308,7 +315,7 @@ export function App() {
       const data = await refreshInventory(entry);
       if (data?.devices.length) setSelectedId(data.devices[0].udid);
     } catch (e) {
-      setError((e as Error).message);
+      if (!recordingActionCancelled(e)) setError((e as Error).message);
     } finally {
       setBusy('');
     }
@@ -323,13 +330,15 @@ export function App() {
     try {
       await fn();
     } catch (e) {
-      setError((e as Error).message);
+      if (!recordingActionCancelled(e)) setError((e as Error).message);
     } finally {
       setBusy('');
     }
   };
   const connect = async (device = selected, rate = targetFps) => {
     if (!device || !host) return;
+    if (guard && !(await guard.confirm('Connect this display'))) return;
+    setTargetFps(rate);
     const attempt = ++connectionAttempt.current;
     setStream('connecting');
     setError('');
@@ -363,7 +372,7 @@ export function App() {
   };
   const selectDevice = async (device: Simulator) => {
     if (busy || device.udid === selectedId) return;
-    await stopStream();
+    if (!(await stopStream())) return;
     setSelectedId(device.udid);
     setDark(undefined);
     setError('');
@@ -380,7 +389,8 @@ export function App() {
   const shutdown = () =>
     act('Shutting down', async () => {
       if (!selected || !host) return;
-      await stopStream();
+      if (!demo) await api!.request(host.id, 'POST', `/devices/${selected.udid}/shutdown`);
+      if (!(await stopStream())) return;
       if (demo)
         setInventory((previous) => ({
           ...previous,
@@ -388,10 +398,7 @@ export function App() {
             d.udid === selected.udid ? { ...d, state: 'Shutdown' } : d,
           ),
         }));
-      else {
-        await api!.request(host.id, 'POST', `/devices/${selected.udid}/shutdown`);
-        await refreshInventory();
-      }
+      else await refreshInventory();
     });
   const filtered = inventory.devices.filter(
     (d) =>
@@ -403,6 +410,7 @@ export function App() {
 
   return (
     <div className={`app ${zoom ? 'expanded' : ''} ${controls ? '' : 'controls-hidden'}`}>
+      <RecordingProtection guard={guard} />
       <aside className="sidebar" aria-label="Macs and simulators" inert={!!modal}>
         <div className="brand">
           <span className="brand-icon">
@@ -629,8 +637,8 @@ export function App() {
                 <button
                   onClick={() =>
                     void act('Forgetting Mac', async () => {
-                      await stopStream();
                       await api!.forget(host.id);
+                      if (!(await stopStream())) return;
                       setHost(undefined);
                       setInventory(empty);
                       setSelectedId('');
@@ -1001,8 +1009,8 @@ export function App() {
                         }
                         onChange={(e) => {
                           const rate = Number(e.target.value);
-                          setTargetFps(rate);
                           if (stream === 'live') void connect(selected, rate);
+                          else setTargetFps(rate);
                         }}
                       >
                         <option value={15}>15 fps</option>
@@ -1130,6 +1138,8 @@ export function App() {
           onClose={closeModal}
           onCreate={async (data) => {
             if (!host) throw new Error('Connect to a Mac first.');
+            if (guard && !(await guard.confirm('Create and select a simulator')))
+              throw new RecordingActionCancelled();
             if (demo) {
               const device: Simulator = {
                 udid: `demo-${Date.now()}`,
@@ -1139,7 +1149,7 @@ export function App() {
                 deviceTypeIdentifier: data.deviceType,
               };
               setInventory((value) => ({ ...value, devices: [...value.devices, device] }));
-              await stopStream();
+              if (!(await stopStream())) return;
               setSelectedId(device.udid);
             } else {
               const result = await api!.request<{ udid: string }>(
@@ -1149,7 +1159,7 @@ export function App() {
                 data,
               );
               await refreshInventory();
-              await stopStream();
+              if (!(await stopStream())) return;
               setSelectedId(result.udid);
             }
             setModal(null);
