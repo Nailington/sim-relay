@@ -147,6 +147,11 @@ On the client, choose a nearby Mac or **Connect a Mac**, enter its address, comp
 fingerprint with the Mac, and enter its pairing token. Pick an existing simulator or create
 one with an installed runtime, then select **Start & connect**.
 
+Use **Mac options → Manage addresses** to save LAN, Tailscale, hostname, or tunnel
+addresses under the same paired Mac. Each new address must prove the exact paired
+certificate. Choose a preferred address; the workspace shows the address currently
+in use and labels fallback connections. See [Mac addresses and fallback](docs/mac-addresses.md).
+
 ## Local and direct connections
 
 Wi-Fi, Ethernet, directly connected Ethernet adapters, Thunderbolt networking, and other

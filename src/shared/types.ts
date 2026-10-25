@@ -3,6 +3,10 @@ export interface HostEntry {
   id: string;
   name: string;
   url: string;
+  /** Verified HTTPS origins for this exact certificate. url is the preferred address. */
+  addresses?: string[];
+  /** Last successfully verified route, for this workspace lifetime only. */
+  currentRoute?: string;
   fingerprint?: string;
   source: 'discovered' | 'saved' | 'demo';
   sessionOnly?: boolean;
@@ -96,7 +100,8 @@ export interface StreamMeta {
   heightPoints: number;
 }
 export interface StreamNotice {
-  type: 'metadata' | 'error' | 'closed' | 'status';
+  type: 'metadata' | 'error' | 'closed' | 'status' | 'route';
+  route?: string;
   state?: 'connecting' | 'live' | 'retrying' | 'off' | 'failed';
   attempt?: number;
   retryInMs?: number;
@@ -129,6 +134,9 @@ export interface DesktopApi {
   hosts(): Promise<HostEntry[]>;
   probe(url: string): Promise<Probe>;
   pair(probe: Probe, token: string): Promise<HostEntry>;
+  addAddress?(id: string, url: string): Promise<HostEntry>;
+  removeAddress?(id: string, url: string): Promise<HostEntry>;
+  preferAddress?(id: string, url: string): Promise<HostEntry>;
   forget(id: string): Promise<void>;
   request<T>(id: string, method: string, path: string, body?: unknown): Promise<T>;
   connect(id: string, udid: string, fps: number): Promise<void>;

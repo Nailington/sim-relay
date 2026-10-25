@@ -1,4 +1,4 @@
-import type { DesktopApi, Profile, Probe, HostEntry, StreamNotice } from '../shared/types';
+import type { DesktopApi, Profile, Probe, StreamNotice } from '../shared/types';
 import { releaseLink } from '../shared/updates';
 import { browserSession } from './browser-session';
 import { browserDisplays } from './browser-displays';
@@ -6,6 +6,7 @@ import { browserRecording } from './browser-recording';
 import { createDiagnostics } from '../electron/diagnostics';
 import { serializeReport } from '../shared/diagnostics';
 import metadata from '../../package.json';
+import { editMacAddress, macAddresses, macAddress, publicMac } from '../shared/mac-routes';
 import {
   announceBrowserAccount,
   createBrowserAccount,
@@ -57,6 +58,7 @@ export async function webCall<T>(
   data?: unknown,
   user?: string,
   signal?: AbortSignal,
+  onRoute?: (route: string) => void,
 ): Promise<T> {
   const response = await fetch(`/api/${action}`, {
     method: 'POST',
@@ -75,13 +77,12 @@ export async function webCall<T>(
       result.error ?? 'The hosting service did not respond. Sign in again or check its connection.',
     );
   }
-  return response.json();
+  const result = await response.json();
+  const route = response.headers.get('X-Sim-Relay-Route');
+  if (route) onRoute?.(route);
+  return result;
 }
-const publicProfile = ({
-  token: _token,
-  certificate: _certificate,
-  ...value
-}: Profile): HostEntry => value;
+const publicProfile = publicMac;
 function download(data: Blob, filename: string) {
   const url = URL.createObjectURL(data),
     link = document.createElement('a');
@@ -101,6 +102,7 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
     onInvalidated?.();
   });
   const key = browserStorageKey(user);
+  const routes = new Map<string, { token: string; certificate: string; route: string }>();
   const resetRevision = () => localStorage.getItem(key + '.reset');
   const readProfiles = (): Profile[] => {
     try {
@@ -123,7 +125,10 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
   };
   const save = (profiles: Profile[]) => {
     try {
-      localStorage.setItem(key, JSON.stringify(profiles));
+      localStorage.setItem(
+        key,
+        JSON.stringify(profiles.map(({ currentRoute: _route, ...profile }) => profile)),
+      );
     } catch {
       throw new Error(
         'Browser storage is unavailable or full. Allow storage for this site before pairing.',
@@ -134,10 +139,40 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
     account.assertCurrent();
     const value = readProfiles().find((profile) => profile.id === id);
     if (!value) throw new Error('Pair with this Mac in this browser first.');
-    return value;
+    const route = routes.get(id);
+    return {
+      ...value,
+      currentRoute:
+        route?.token === value.token &&
+        route.certificate === value.certificate &&
+        macAddresses(value).includes(route.route)
+          ? route.route
+          : undefined,
+    };
+  };
+  const rememberRoute = (profile: Profile, route: string) => {
+    account.assertCurrent();
+    const current = get(profile.id);
+    if (
+      current.token === profile.token &&
+      current.certificate === profile.certificate &&
+      macAddresses(current).includes(macAddress(route))
+    )
+      routes.set(profile.id, {
+        token: profile.token,
+        certificate: profile.certificate,
+        route: macAddress(route),
+      });
   };
   const notices = new Set<(notice: StreamNotice) => void>();
   const notify = (notice: StreamNotice) => {
+    if (notice.type === 'route' && notice.route && session.target) {
+      try {
+        rememberRoute(get(session.target.hostId), notice.route);
+      } catch {
+        return;
+      }
+    }
     for (const listener of notices) listener(notice);
   };
   const transport = browserSession(get, notify, account, resetRevision);
@@ -146,13 +181,44 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
   const call = async <T>(action: string, data: () => unknown): Promise<T> => {
     await account.verify();
     try {
-      const result = await webCall<T>(action, data(), user, lifetime.signal);
+      const payload = data();
+      const sent = (payload as { profile?: Profile })?.profile;
+      const result = await webCall<T>(action, payload, user, lifetime.signal, (route) => {
+        if (sent) rememberRoute(sent, route);
+      });
       account.assertCurrent();
       return result;
     } catch (error) {
       if (error instanceof BrowserAuthorizationRequired) account.invalidate();
       throw error;
     }
+  };
+  const editAddress = async (id: string, action: 'add' | 'remove' | 'prefer', value: string) => {
+    await account.verify();
+    const reset = resetRevision();
+    const original = get(id);
+    // Validate the bounded set before starting an outbound verification.
+    editMacAddress(original, action, value);
+    if (action === 'add')
+      await call('verify-address', () => ({ profile: get(id), url: macAddress(value) }));
+    let result: Profile = original;
+    await storageMutation(key, () => {
+      account.assertCurrent();
+      if (reset !== resetRevision())
+        throw new Error('Saved setup was cleared. Reopen the Mac’s addresses.');
+      const current = get(id);
+      if (current.token !== original.token || current.certificate !== original.certificate)
+        throw new Error('Saved pairing changed. Reopen the Mac’s addresses.');
+      result = editMacAddress(current, action, value);
+      if (
+        session.target?.hostId === id &&
+        (action === 'prefer' || (action === 'remove' && current.currentRoute === macAddress(value)))
+      )
+        session.disconnect();
+      save(readProfiles().map((profile) => (profile.id === id ? result : profile)));
+      if (!result.currentRoute) routes.delete(id);
+    });
+    return publicProfile(result);
   };
   const disconnect = async () => {
     session.disconnect();
@@ -164,17 +230,32 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
     version: metadata.version,
     platform: 'browser',
     profile: get,
+    prepare: async (profile) => {
+      const result = await call<{ url: string }>('route', () => ({ profile: get(profile.id) }));
+      rememberRoute(profile, result.url);
+      return { ...profile, url: result.url, addresses: [result.url], currentRoute: result.url };
+    },
     probe: (url) => call<Probe>('probe', () => ({ url })),
     inventory: (profile) =>
-      call('request', () => ({ profile: get(profile.id), method: 'GET', path: '/devices' })),
+      call('request', () => ({
+        profile: {
+          ...get(profile.id),
+          url: profile.url,
+          addresses: [profile.url],
+          currentRoute: profile.url,
+        },
+        method: 'GET',
+        path: '/devices',
+      })),
   });
   const requestBlob = async (id: string, path: string) => {
     await account.verify();
+    const profile = get(id);
     const response = await fetch('/api/request', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', 'X-Sim-Relay-User': encodeURIComponent(user) },
-      body: JSON.stringify({ profile: get(id), method: 'GET', path }),
+      body: JSON.stringify({ profile, method: 'GET', path }),
       signal: lifetime.signal,
     });
     account.assertCurrent();
@@ -185,6 +266,8 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
       );
     const blob = await response.blob();
     account.assertCurrent();
+    const route = response.headers.get('X-Sim-Relay-Route');
+    if (route) rememberRoute(profile, route);
     return blob;
   };
   const api: DesktopApi = {
@@ -222,7 +305,7 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
     },
     hosts: async () => {
       await account.verify();
-      return readProfiles().map(publicProfile);
+      return readProfiles().map((profile) => publicProfile(get(profile.id)));
     },
     probe: (url) => call<Probe>('probe', () => ({ url })),
     pair: async (probe, token) => {
@@ -235,11 +318,21 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
             'Saved setup was cleared while pairing. Start pairing again to save this Mac.',
           );
       };
-      const previous = readProfiles().find((profile) => profile.url === probe.url);
+      const sameMac = readProfiles().find(
+        (profile) =>
+          profile.certificate === probe.certificate && profile.fingerprint === probe.fingerprint,
+      );
+      if (sameMac && !macAddresses(sameMac).includes(macAddress(probe.url)))
+        return editAddress(sameMac.id, 'add', probe.url);
+      const previous = readProfiles().find((profile) =>
+        macAddresses(profile).includes(macAddress(probe.url)),
+      );
       const proposed: Profile = {
         id: previous?.id ?? crypto.randomUUID(),
         name: probe.info.name,
-        url: probe.url,
+        url: sameMac?.url ?? macAddress(probe.url),
+        addresses: sameMac ? macAddresses(sameMac) : [macAddress(probe.url)],
+        currentRoute: macAddress(probe.url),
         fingerprint: probe.fingerprint,
         certificate: probe.certificate,
         token,
@@ -258,12 +351,16 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
       });
       return publicProfile(paired);
     },
+    addAddress: (id, url) => editAddress(id, 'add', url),
+    removeAddress: (id, url) => editAddress(id, 'remove', url),
+    preferAddress: (id, url) => editAddress(id, 'prefer', url),
     forget: async (id) => {
       await account.verify();
       if (session.target?.hostId === id) await disconnect();
       await storageMutation(key, () => {
         account.assertCurrent();
         save(readProfiles().filter((profile) => profile.id !== id));
+        routes.delete(id);
       });
     },
     request: (id, method, path, body) =>
@@ -373,8 +470,9 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
       await account.verify();
       if (selected.size > 128 * 1024 * 1024)
         throw new Error('Choose an app archive smaller than 128 MB.');
+      const profile = get(id);
       const encoded = btoa(
-        String.fromCharCode(...new TextEncoder().encode(JSON.stringify(get(id)))),
+        String.fromCharCode(...new TextEncoder().encode(JSON.stringify(profile))),
       );
       const response = await fetch('/api/upload', {
         method: 'POST',
@@ -393,6 +491,8 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
         throw new Error(
           'The app could not be installed. Choose a simulator .app.zip archive and check the Mac connection.',
         );
+      const route = response.headers.get('X-Sim-Relay-Route');
+      if (route) rememberRoute(profile, route);
       return true;
     },
   };

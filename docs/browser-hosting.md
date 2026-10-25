@@ -31,6 +31,11 @@ Add every address clients will enter, including SSH-tunnel addresses if used. Th
 limits the endpoints the relay can probe; it is not a per-user simulator permission list.
 Each Mac independently authorizes each browser client.
 
+Saved Macs can have multiple [verified addresses](mac-addresses.md). Allow every
+preferred and fallback address in `SIM_RELAY_WEB_HOSTS`. The relay rejects an entire
+routing set containing a disallowed origin before probing or forwarding credentials;
+client-supplied fallback routes cannot extend this allowlist.
+
 For direct LAN access, configure `SIM_RELAY_WEB_CERT` and `SIM_RELAY_WEB_KEY` with
 certificate and private-key paths, set `SIM_RELAY_WEB_BIND=0.0.0.0`, and set
 `SIM_RELAY_WEB_ORIGIN=https://your-server-name:49301`. Browsers must trust that

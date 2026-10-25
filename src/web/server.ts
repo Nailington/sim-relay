@@ -5,7 +5,15 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { z } from 'zod';
-import { hostUrl, probeHost, remoteRequest, tlsOptions } from '../electron/remote';
+import {
+  hostUrl,
+  probeHost,
+  remoteRequest,
+  tlsOptions,
+  selectMacRoute,
+  verifyMacAddress,
+} from '../electron/remote';
+import { macAddresses, MAX_MAC_ADDRESSES } from '../shared/mac-routes';
 import { inputSchema } from '../host/protocol';
 import type { Profile } from '../shared/types';
 import { RecordingDownloads } from './recording-download';
@@ -19,6 +27,8 @@ const profileSchema = z.object({
   id: z.string().uuid(),
   name: z.string().max(255),
   url: z.string().max(2048),
+  addresses: z.array(z.string().max(2048)).max(MAX_MAC_ADDRESSES).optional(),
+  currentRoute: z.string().max(2048).optional(),
   fingerprint: z.string().max(256),
   certificate: z.string().max(16384),
   token: z.string().min(1).max(256),
@@ -104,6 +114,14 @@ export async function startWeb(options: WebOptions) {
   const getProfile = (value: unknown): Profile => {
     const profile = profileSchema.parse(value);
     profile.url = checkHost(profile.url);
+    // Validate the whole routing set before any outbound I/O. Client routing is
+    // never a way around the deployment owner's origin allowlist.
+    profile.addresses = macAddresses(profile).map(checkHost);
+    if (profile.currentRoute !== undefined) {
+      profile.currentRoute = checkHost(profile.currentRoute);
+      if (!profile.addresses.includes(profile.currentRoute))
+        throw new Error('Choose a saved Mac address.');
+    }
     return profile;
   };
   const sessions = new Map<string, { user: string; expires: number }>();
@@ -314,6 +332,7 @@ export async function startWeb(options: WebOptions) {
             await body(request, 128 * 1024 * 1024),
           );
           authorize();
+          response.setHeader('X-Sim-Relay-Route', profile.currentRoute!);
           return json(response, 200, { ok: true });
         }
         const data = JSON.parse((await body(request)).toString());
@@ -331,14 +350,26 @@ export async function startWeb(options: WebOptions) {
             downloads.issue(current.id, getProfile(data.profile), data.recording, current.expires),
           );
         if (pathname === '/api/probe') {
-          const probe = await probeHost(checkHost(z.string().parse(data.url)));
+          const probe = await probeHost(checkHost(z.string().parse(data.url)), abort.signal);
           authorize();
           return json(response, 200, probe);
+        }
+        if (pathname === '/api/verify-address') {
+          const profile = getProfile(data.profile);
+          const address = checkHost(z.string().max(2048).parse(data.url));
+          const url = await verifyMacAddress(profile, address, abort.signal);
+          authorize();
+          return json(response, 200, { url });
+        }
+        if (pathname === '/api/route') {
+          const profile = await selectMacRoute(getProfile(data.profile), abort.signal);
+          authorize();
+          return json(response, 200, { url: profile.url });
         }
         if (pathname === '/api/pair') {
           const profile = getProfile(data.profile);
           // Re-probe the pinned endpoint. Never trust renderer-supplied capability declarations.
-          const probe = await probeHost(profile.url);
+          const probe = await probeHost(profile.currentRoute ?? profile.url, abort.signal);
           authorize();
           if (probe.fingerprint !== profile.fingerprint)
             throw new Error('The Mac certificate changed. Verify its fingerprint and pair again.');
@@ -383,6 +414,7 @@ export async function startWeb(options: WebOptions) {
             data.body,
           );
           authorize();
+          response.setHeader('X-Sim-Relay-Route', profile.currentRoute!);
           if (/\/screenshot$/.test(data.path)) {
             response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
             response.end(result);
@@ -460,7 +492,9 @@ export async function startWeb(options: WebOptions) {
       browser.once('close', () => browserSockets.delete(browser));
       let remote: WebSocket | undefined,
         started = false;
+      const abort = new AbortController();
       const close = () => {
+        abort.abort();
         clearTimeout(startup);
         clearInterval(heartbeat);
         remote?.terminate();
@@ -468,7 +502,7 @@ export async function startWeb(options: WebOptions) {
         relays.delete(close);
       };
       relays.add(close);
-      const startup = setTimeout(close, 15_000);
+      const startup = setTimeout(close, 30_000);
       let alive = true;
       const heartbeat = setInterval(() => {
         if (!alive || !authorized(current)) {
@@ -483,7 +517,7 @@ export async function startWeb(options: WebOptions) {
       });
       browser.on('error', close);
       browser.once('close', close);
-      browser.on('message', (raw, binary) => {
+      browser.on('message', async (raw, binary) => {
         if (binary || !authorized(current)) {
           close();
           return;
@@ -493,9 +527,13 @@ export async function startWeb(options: WebOptions) {
           if (!started) {
             if (data.user !== current.user) throw new AuthorizationRequired();
             started = true;
-            const profile = getProfile(data.profile);
+            const saved = getProfile(data.profile);
             const udid = z.string().uuid().parse(data.udid);
             const fps = z.union([z.literal(15), z.literal(30), z.literal(60)]).parse(data.fps);
+            const profile = await selectMacRoute(saved, abort.signal);
+            abort.signal.throwIfAborted();
+            if (!authorized(current) || browser.readyState !== WebSocket.OPEN)
+              throw new AuthorizationRequired();
             const url = new URL(`/stream/${udid}?fps=${fps}`, profile.url);
             url.protocol = 'wss:';
             remote = new WebSocket(url, {
@@ -505,7 +543,11 @@ export async function startWeb(options: WebOptions) {
               maxPayload: 16 * 1024 * 1024,
               perMessageDeflate: false,
             });
-            remote.on('open', () => clearTimeout(startup));
+            remote.on('open', () => {
+              clearTimeout(startup);
+              if (browser.readyState === WebSocket.OPEN)
+                browser.send(JSON.stringify({ type: 'route', route: profile.url }));
+            });
             remote.on('message', (frame, isBinary) => {
               if (browser.readyState !== WebSocket.OPEN) return;
               if (isBinary && browser.bufferedAmount > 2 * 1024 * 1024) return;
