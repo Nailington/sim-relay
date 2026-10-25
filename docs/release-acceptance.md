@@ -24,6 +24,12 @@ its application commit. A public checkout cannot reproduce a missing private bun
 
 ## Current evidence and scope
 
+- **Passed — Linux foundation regressions, not native acceptance.** At integrated
+  `0e2d049`, 148 private regressions, type-check/build and the actual built React,
+  Chromium-account and Electron window-routing smokes passed. The independently
+  reproduced HTTP-retirement race remains a failure at that checkpoint.
+  [Environment, private-suite digest and qualification](validation-checkpoint-2026-10-25.md).
+
 - **Passed — historical native session streaming and requested orientation metadata.**
   App source `cce368590f02c74eedb3b5d7d2222f11368d95fc` (version 0.1.5),
   2026-10-23; macOS 15.7.1, Xcode 26.0.1 (17A400), Node 24.16.0,
