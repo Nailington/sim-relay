@@ -145,8 +145,9 @@ Mac's firewall for LAN access. Default port: TCP **49300**. Discovery uses Bonjo
 On macOS, allow Local Network access when requested; see [Apple’s local network privacy guide](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
 
 On the client, choose a nearby Mac or **Connect a Mac**, enter its address, compare the
-fingerprint with the Mac, and enter its pairing token. Pick an existing simulator or create
-one with an installed runtime, then select **Start & connect**.
+fingerprint with the Mac, and enter its current single-use pairing code. The Mac owner then
+grants this client access in **Authorized clients**. Pick a permitted simulator or, with
+creation access, create one with an installed runtime, then select **Start & connect**.
 
 ## Local and direct connections
 

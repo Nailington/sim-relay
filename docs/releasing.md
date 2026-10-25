@@ -66,8 +66,13 @@ after fixing permissions or a non-fast-forward push.
    it to `lib.fakeHash`, build the flake, and copy the reported actual hash. Stage new source
    files before building a local Git flake. The Nix package version reads `package.json`
    automatically, so there is no separate flake version to edit.
-3. Run the private regression workflow, `npm run check`, `npm run build`, and `nix build`. Commit the version, lockfile, Nix hash,
-   and any release changes, and push them to the default branch. Let CI pass.
+3. Run the private regression workflow, `npm run check`, `npm run build`, and `nix build`.
+   Complete the [acceptance ledger](release-acceptance.md) for the intended platforms
+   and features. Attach the exact candidate commit, private-suite digest and sanitized
+   report; carry unresolved failures or explicitly excluded claims into the release notes.
+   Public CI builds cannot approve native runtime gates. Obtain the owner's release review
+   before tagging. Commit the version, lockfile, Nix hash and reviewed release changes,
+   and push through the normal review process to the default branch. Let CI pass.
 4. Tag that tested commit and push the tag:
 
    ```sh
