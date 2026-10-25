@@ -33,6 +33,9 @@ export async function terminateChild(
         }, timeoutMs);
       }),
     ]);
+    // A kill request is not process retirement. Wait for the observed exit before
+    // host shutdown can acknowledge that its capture resources are gone.
+    await done.catch(() => {});
   } finally {
     clearTimeout(timer);
   }
@@ -48,7 +51,7 @@ function stop() {
   if (stopping) return;
   stopping = true;
   child.kill('SIGINT');
-  setTimeout(() => { process.stderr.write('Recording finalization exceeded 30 seconds.\n'); child.kill('SIGKILL'); process.exit(1); }, 30000).unref();
+  setTimeout(() => { process.stderr.write('Recording finalization exceeded 30 seconds.\n'); child.kill('SIGKILL'); }, 30000).unref();
 }
 process.stdin.resume();
 process.stdin.on('end', stop);

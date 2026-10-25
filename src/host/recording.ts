@@ -97,8 +97,14 @@ export class RecordingStore {
         await rm(file, { recursive: true, force: true });
     }
   }
-  create(udid: string, notify: (status: RecordingStatus) => void) {
-    const recording = new Recording(this, udid, notify);
+  create(
+    udid: string,
+    notify: (status: RecordingStatus) => void,
+    clientId?: string,
+    authorize: () => void = () => {},
+  ) {
+    authorize();
+    const recording = new Recording(this, udid, notify, clientId, authorize);
     this.entries.set(recording.id, recording);
     return recording;
   }
@@ -112,7 +118,7 @@ export class RecordingStore {
       !timingSafeEqual(Buffer.from(ticket), Buffer.from(item.ticket))
     )
       return;
-    return { file: item.file, bytes: item.bytes };
+    return { file: item.file, bytes: item.bytes, udid: item.udid, clientId: item.clientId };
   }
   remove(id: string) {
     this.entries.delete(id);
@@ -136,8 +142,10 @@ export class Recording {
   private startedAt = Date.now();
   constructor(
     private store: RecordingStore,
-    private udid: string,
+    readonly udid: string,
     private notify: (status: RecordingStatus) => void,
+    readonly clientId?: string,
+    private authorize: () => void = () => {},
   ) {}
   start() {
     return (this.startup ??= (async () => {
@@ -146,8 +154,10 @@ export class Recording {
         this.directory = await mkdtemp(path.join(this.store.directory, 'capture-'));
         this.file = path.join(this.directory, 'screen.mp4');
         this.abort.signal.throwIfAborted();
+        this.authorize();
         this.capture = await this.store.factory(this.udid, this.file, this.abort.signal);
         this.abort.signal.throwIfAborted();
+        this.authorize();
         this.startedAt = Date.now();
         this.notify({ phase: 'recording', startedAt: this.startedAt });
         this.timer = setInterval(() => {
@@ -227,6 +237,7 @@ export class Recording {
       } finally {
         await file.close();
       }
+      this.authorize();
       this.ready = true;
       this.notify({ phase: 'ready', startedAt: this.startedAt, bytes: this.bytes });
       this.expires = setTimeout(
@@ -246,11 +257,17 @@ export class Recording {
       clearInterval(this.timer);
       clearTimeout(this.expires);
       await this.startup?.catch(() => {});
-      await this.capture?.abort().catch(() => {});
+      let cleanupError: unknown;
+      try {
+        await this.capture?.abort();
+      } catch (error) {
+        cleanupError = error;
+      }
       await this.stopping?.catch(() => {});
       if (this.directory) await rm(this.directory, { force: true, recursive: true });
       this.store.remove(this.id);
       this.notify({ phase: 'idle' });
+      if (cleanupError) throw cleanupError;
     })());
   }
 }

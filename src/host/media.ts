@@ -6,6 +6,7 @@ import { AdaptiveVideo } from './adaptive';
 import { AudioCoordinator, audioHelper, type AudioCapture } from './audio';
 import { RecordingStore, type Recording } from './recording';
 import { exec } from './simulator';
+import type { Capability } from './permissions';
 
 const action = z.object({
   type: z.literal('media-control'),
@@ -67,6 +68,7 @@ export class MediaPeer {
   private closed = false;
   private closing?: Promise<void>;
   private busy = false;
+  private cleanupFailures: unknown[] = [];
   private settings = '';
   private sentPing?: number;
   constructor(
@@ -75,12 +77,37 @@ export class MediaPeer {
     fps: number,
     private host: HostMedia,
     private apply: (settings: VideoSettings) => void,
+    private authorize: (capability: Capability) => void = () => {},
+    private clientId?: string,
   ) {
     this.video = new AdaptiveVideo(fps);
-    this.send({ type: 'media-capabilities', capabilities: host.capabilities });
+    this.send({
+      type: 'media-capabilities',
+      capabilities: {
+        ...host.capabilities,
+        recording: host.capabilities.recording && this.allowed('recordings'),
+        audio: host.capabilities.audio && this.allowed('hostAudio'),
+        ...(!this.allowed('hostAudio')
+          ? { audioReason: 'The Mac owner has not granted host-wide audio access.' }
+          : {}),
+      },
+    });
+  }
+  private allowed(capability: Capability) {
+    try {
+      this.authorize(capability);
+      return true;
+    } catch {
+      return false;
+    }
   }
   private send(value: MediaNotice | object) {
-    if (!this.closed && this.ws.readyState === Socket.OPEN && this.ws.bufferedAmount < 512 * 1024)
+    if (
+      !this.closed &&
+      this.allowed('view') &&
+      this.ws.readyState === Socket.OPEN &&
+      this.ws.bufferedAmount < 512 * 1024
+    )
       this.ws.send(JSON.stringify(value));
   }
   handle(raw: unknown): boolean {
@@ -113,7 +140,13 @@ export class MediaPeer {
     void this.control(command)
       .then(
         (result) => this.send({ type: 'media-result', id: command.id, result }),
-        (error: Error) => this.send({ type: 'media-result', id: command.id, error: error.message }),
+        (error: Error) =>
+          this.send({
+            type: 'media-result',
+            id: command.id,
+            error: error.message,
+            ...('code' in error ? { code: error.code } : {}),
+          }),
       )
       .finally(() => {
         this.busy = false;
@@ -139,21 +172,32 @@ export class MediaPeer {
   }
   private async control(command: z.infer<typeof action>) {
     if (this.closed) throw new Error('Simulator session closed.');
+    const capability = command.action.startsWith('recording-') ? 'recordings' : 'hostAudio';
+    this.authorize(capability);
     switch (command.action) {
       case 'recording-start': {
         if (!this.host.capabilities.recording)
           throw new Error('Screen recording requires a Mac host with Xcode.');
         if (this.recording) throw new Error('Save or discard the previous recording first.');
-        const recording = this.host.recordings.create(this.udid, (status) => {
-          // Expiry and encoder exit close autonomously. Release ownership only
-          // after cleanup publishes idle, and ignore any obsolete lifecycle notice.
-          if (this.recording !== recording) return;
-          if (status.phase === 'idle') this.recording = undefined;
-          this.send({ type: 'recording', recording: status });
-        });
+        const recording = this.host.recordings.create(
+          this.udid,
+          (status) => {
+            // Expiry and encoder exit close autonomously. Release ownership only
+            // after cleanup publishes idle, and ignore any obsolete lifecycle notice.
+            if (this.recording !== recording) return;
+            if (status.phase === 'idle') this.recording = undefined;
+            this.send({ type: 'recording', recording: status });
+          },
+          this.clientId,
+          () => {
+            if (this.closed) throw new Error('Simulator session closed.');
+            this.authorize('recordings');
+          },
+        );
         this.recording = recording;
         try {
           await recording.start();
+          this.authorize('recordings');
         } catch (error) {
           await recording.close();
           throw error;
@@ -163,7 +207,9 @@ export class MediaPeer {
       case 'recording-stop':
         if (!this.recording) throw new Error('There is no recording to stop.');
         try {
-          return await this.recording.stop();
+          const result = await this.recording.stop();
+          this.authorize('recordings');
+          return result;
         } catch (error) {
           this.send({
             type: 'recording',
@@ -190,6 +236,7 @@ export class MediaPeer {
             (pcm) => {
               if (
                 this.closed ||
+                !this.allowed('hostAudio') ||
                 this.ws.readyState !== Socket.OPEN ||
                 this.ws.bufferedAmount > 64 * 1024
               )
@@ -203,8 +250,14 @@ export class MediaPeer {
             },
             this.audioAbort!.signal,
           );
-          if (this.closed || this.audioAbort!.signal.aborted) await capture.close();
-          else {
+          if (this.closed || this.audioAbort!.signal.aborted || !this.allowed('hostAudio')) {
+            try {
+              await capture.close();
+            } catch (error) {
+              this.cleanupFailures.push(error);
+              throw error;
+            }
+          } else {
             this.audio = capture;
             this.send({ type: 'audio', active: true });
           }
@@ -223,7 +276,12 @@ export class MediaPeer {
   private stopAudio() {
     this.audioAbort?.abort();
     return (this.audioClosing ??= (async () => {
-      await this.audio?.close();
+      try {
+        await this.audio?.close();
+      } catch (error) {
+        this.cleanupFailures.push(error);
+        throw error;
+      }
       this.audio = undefined;
       this.send({ type: 'audio', active: false });
     })());
@@ -232,9 +290,19 @@ export class MediaPeer {
     return (this.closing ??= (async () => {
       this.closed = true;
       this.audioAbort?.abort();
-      await this.pendingAudio?.catch(() => {});
-      // close assigned after pending startup, so startup races cannot escape ownership.
-      await Promise.allSettled([this.audio?.close(), this.recording?.close()]);
+      // Abort recording immediately even if audio startup has not settled.
+      const results = await Promise.allSettled([
+        this.recording?.close(),
+        (async () => {
+          await this.pendingAudio?.catch(() => {});
+          await this.audio?.close();
+        })(),
+      ]);
+      const failures = [
+        ...this.cleanupFailures,
+        ...results.filter((result) => result.status === 'rejected').map((result) => result.reason),
+      ];
+      if (failures.length) throw new AggregateError(failures, 'Media cleanup failed.');
     })());
   }
 }
