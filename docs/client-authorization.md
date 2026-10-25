@@ -2,7 +2,10 @@
 
 Each paired client receives a separate credential and a name identifying its computer and
 platform. The pairing code is single-use: fetch the current code before pairing another
-client. A saved client never uses the pairing code to control a simulator.
+client. A saved client never uses the pairing code to control a simulator. New clients start
+as viewers with no device access; the Mac owner must grant permissions after pairing.
+See [client permissions](client-permissions.md) for device scope, role, media grants, migration,
+and the local compare-and-swap administration contract.
 
 On the Mac running the host:
 
@@ -24,8 +27,9 @@ a stalled session keeps its simulator lease until cleanup finishes.
 
 `clients` shows pairing time, last observed activity (updated during this host run and saved
 with authorization changes), and active display count. Credential values and hashes are
-never included. Each client has simulator-management access as the Mac user; access is not
-limited to a particular simulator or app. Duplicate names are distinguished by their IDs.
+never included. Client permissions limit simulator visibility, input, management, captures,
+and host-wide audio. Existing version 1 client records receive an explicit compatibility grant
+on migration; new clients never inherit that grant. Duplicate names are distinguished by their IDs.
 
 From a source checkout use `npm run host -- clients`, `npm run host -- pairing`, or
 `npm run host -- revoke CLIENT_ID`.

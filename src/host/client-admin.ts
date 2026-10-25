@@ -37,7 +37,7 @@ export async function clientAdminServer(
     socket.on('data', (chunk) => {
       if (handled) return;
       input += chunk;
-      if (input.length > 4096) {
+      if (input.length > 64 * 1024) {
         socket.destroy();
         return;
       }

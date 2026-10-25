@@ -158,11 +158,10 @@ export class AudioCoordinator {
       return {
         close: () =>
           (closing ??= (async () => {
-            try {
-              await capture.close();
-            } finally {
-              if (this.owner === owner) this.owner = undefined;
-            }
+            await capture.close();
+            // Keep ownership on cleanup failure rather than permit a second capture
+            // while the previous host-wide source may still be running.
+            if (this.owner === owner) this.owner = undefined;
           })()),
       };
     } catch (error) {
