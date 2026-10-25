@@ -1,8 +1,8 @@
 # Integrated validation — 2026-10-25
 
-Application commit: `e8982192c8028d967295dcdea34dd7fde42bad14`.
+Application commit: `8a8b0db425535d7a2a70cc608426fc9100edc540`.
 Displayed version: 0.1.5 (unreleased changes; no release or main merge authorized here).
-Private suite manifest SHA-256: `7d5f94b341127c582077a30cfbc32fa22ff329829b89d7443d4d8818193e1061`.
+Private suite manifest SHA-256: `2d5b57f102d6bbdcd98579cda1046d6bbd401e79f03943ee263224c7982d456a`.
 The manifest hashes sorted relative names in `tests/`, NUL, then each file's binary
 SHA-256, concatenated into SHA-256. A restricted local checkpoint preserves the suite,
 manifest and logs. This report contains no test sources or raw captures.
@@ -17,11 +17,11 @@ injected-backend Linux checks. Historical native versions are in the
 
 - `npm run build`, including TypeScript checking and production renderer/main/preload,
   host, web and frontend builds.
-- `node --import tsx --test tests/*.test.*`: **185 passed**, zero failures/skips.
+- `node --import tsx --test tests/*.test.*`: **186 passed**, zero failures/skips.
   Covers pinned HTTPS/WSS authorization, per-client scope/CAS, revoke/body/dispatch
   races, account/reset generations, bounded media, updates/migration, exact-certificate
   aliases and no action replay, recording decisions and shutdown retirement.
-- The retirement subset has **16 passing checks**, including actual abortable Node
+- The retirement subset has **17 passing checks**, including actual abortable Node
   children, SIGKILL escalation, deferred HTTP/finally after revoke, installation staging
   cleanup, sticky shutdown timeout, fatal pending display-startup cleanup, and an
   already signal-terminated companion. Native partial-startup cleanup failures must
@@ -60,8 +60,11 @@ closed on deadline. A second independent review at `29375a5` found fatal startup
 cleanup being swallowed, an already signaled companion waiting for a past exit event,
 and a missing Nix Mac GUI host resource. `e898219` fixes all three; the first two have
 new behavior regressions, and the Nix resource mapping was checked in the evaluated
-Darwin derivation. The fixes were verified locally; no separate independent approval
-of that final patch is claimed.
+Darwin derivation. A further private Node-helper reproduction showed that a ready
+announcement arriving after cancellation could create a new RPC channel after cleanup began. `8a8b0db` checks
+abort state before channel creation and again before streaming resources; that regression
+fails before the fix and passes afterward. The fixes were verified locally; no separate
+independent approval of the final patch is claimed.
 
 ## Limits and next gates
 
