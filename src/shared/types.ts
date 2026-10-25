@@ -119,6 +119,7 @@ export interface DesktopApi {
     channel: import('./updates').UpdateChannel,
   ): Promise<import('./updates').UpdateResult>;
   openUpdateLink?(url: string): Promise<void>;
+  hostManagement?: import('./host-management').HostManagementApi;
   workspace?: {
     restore(): { hostId?: string; deviceId?: string; fps?: number };
     save(value: { hostId?: string; deviceId?: string; fps?: number }): void;
