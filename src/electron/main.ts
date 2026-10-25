@@ -16,7 +16,8 @@ import {
   verifyMacAddress,
 } from './remote';
 import { discoveredMacs, editMacAddress, macAddresses, publicMac } from '../shared/mac-routes';
-import { startHost } from '../host/server';
+import { createServiceManager } from '../host/service-manager';
+import { registerHostManagement } from './host-management';
 import { installHostCommand } from './host-command';
 import { createDiagnostics } from './diagnostics';
 import { serializeReport, type DiagnosticStage } from '../shared/diagnostics';
@@ -47,7 +48,18 @@ const displays = new Map<number, DisplayContext>();
 const sessions = new SessionRouter<number, RelaySession>();
 const identities = new WeakMap<RelaySession, DisplayContext>();
 const mediaBySession = new WeakMap<RelaySession, ClientMedia>();
-let sharing: Awaited<ReturnType<typeof startHost>> | undefined;
+const hostService = createServiceManager({
+  launch: {
+    args: [
+      process.execPath,
+      app.isPackaged
+        ? path.join(process.resourcesPath, 'host/host.cjs')
+        : path.resolve(__dirname, '../dist-host/host.cjs'),
+      'serve',
+    ],
+    workingDirectory: app.getPath('home'),
+  },
+});
 const profiles = new Map<string, Profile>(),
   discovered = new Map<string, HostEntry>();
 let secureStorageAvailable = false;
@@ -675,14 +687,14 @@ async function main() {
     const parsed = inputSchema.safeParse(input);
     if (parsed.success) sessions.get(owner.id)?.input(parsed.data);
   });
-  handle('host-status', (): HostStatus => sharing?.status ?? { running: false });
-  handle('start-host', async () => {
-    sharing ??= await startHost({ directory: path.join(app.getPath('userData'), 'host') });
-    return sharing.status;
-  });
+  registerHostManagement(handle, hostService);
+  handle(
+    'host-status',
+    async (): Promise<HostStatus> => (await hostService.status()).host ?? { running: false },
+  );
+  handle('start-host', async () => (await hostService.action('start')).host ?? { running: false });
   handle('stop-host', async () => {
-    await sharing?.close();
-    sharing = undefined;
+    await hostService.action('stop');
   });
   handle(
     'save-screenshot',
@@ -778,6 +790,5 @@ app.on('before-quit', (event) => {
     cleanups.push(mediaBySession.get(session)?.close() ?? Promise.resolve());
   }
   discovery?.destroy();
-  cleanups.push(sharing?.close() ?? Promise.resolve());
   void Promise.allSettled(cleanups).finally(() => app.quit());
 });
