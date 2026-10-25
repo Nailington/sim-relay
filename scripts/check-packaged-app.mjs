@@ -30,7 +30,7 @@ export async function checkPackagedApp(context) {
   };
   await inspect(resources);
   if (context.electronPlatformName === 'darwin')
-    for (const file of ['bin/sim-relay-upgrade', 'bin/sim-relay-host'])
+    for (const file of ['bin/sim-relay-upgrade', 'bin/sim-relay-host', '../MacOS/Sim Relay'])
       await access(path.join(resources, file));
   console.log('Packaged browser command, frontend and private asset exclusion: PASS');
 }
