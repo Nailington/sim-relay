@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { exec } from './process';
+import { exec, RetirementError, retirementDeadline } from './process';
 export { exec } from './process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -147,7 +147,8 @@ export class SimulatorSession {
   ) {
     const session = new SimulatorSession();
     const abort = () => {
-      void session.close();
+      // The startup path below still awaits and reports this cached cleanup promise.
+      void session.close().catch(() => {});
     };
     signal?.throwIfAborted();
     try {
@@ -261,7 +262,13 @@ export class SimulatorSession {
       session.setVideoSettings({ fps, scale: 1, quality: 0.7 });
       return session;
     } catch (e) {
-      await session.close();
+      try {
+        await session.close();
+      } catch (cleanupError) {
+        throw new RetirementError('Simulator startup cleanup failed. Restart the Mac host.', {
+          cause: new AggregateError([e, cleanupError]),
+        });
+      }
       throw e;
     } finally {
       signal?.removeEventListener('abort', abort);
@@ -360,19 +367,25 @@ export class SimulatorSession {
     // Complete the final gesture and drain releases before stopping the owned process.
     await Promise.race([this.hid?.drain(), new Promise((resolve) => setTimeout(resolve, 1000))]);
     this.client?.close();
-    if (this.child?.pid && this.child.exitCode === null) {
+    if (this.child?.pid && this.child.exitCode === null && this.child.signalCode === null) {
       const child = this.child;
-      child.kill('SIGTERM');
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-          // The exit listener completes retirement; sending a signal is insufficient.
-        }, 1000);
-        child.once('exit', () => {
-          clearTimeout(timer);
-          resolve();
-        });
+      const exited = new Promise<void>((resolve) => {
+        child.once('exit', () => resolve());
       });
+      const timer = setTimeout(() => {
+        try {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        } catch {
+          // The retirement deadline still rejects if the owned process cannot be reaped.
+        }
+      }, 1000);
+      try {
+        child.kill('SIGTERM');
+        // Sending a signal does not establish retirement; an unreaped child fails closed.
+        await retirementDeadline(exited, 5000);
+      } finally {
+        clearTimeout(timer);
+      }
     }
     if (this.directory) await rm(this.directory, { recursive: true, force: true });
   }

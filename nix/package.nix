@@ -81,6 +81,8 @@ buildNpmPackage {
     chmod -R u+w "$out/Applications/Sim Relay.app"
     rm -f "$bundle/Resources/default_app.asar"
     ln -s "$appDir" "$bundle/Resources/app"
+    # Electron's packaged GUI and the CLI must use the same compiled host entry point.
+    ln -s "$appDir/dist-host" "$bundle/Resources/host"
     python3 - "$bundle/Info.plist" <<'PY'
     import plistlib
     import sys

@@ -552,7 +552,12 @@ export async function startHost(options: {
             await discovery?.catch((error) => {
               if (error instanceof RetirementError) throw error;
             });
-            const active = session ?? (await pending?.catch(() => undefined));
+            const active =
+              session ??
+              (await pending?.catch((error) => {
+                if (error instanceof RetirementError) throw error;
+                return undefined;
+              }));
             await active?.close();
           })(),
         ]);
