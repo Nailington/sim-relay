@@ -195,6 +195,7 @@ export class SimulatorSession {
           }
         });
       });
+      signal?.throwIfAborted();
       const Client = companionDefinition().idb.CompanionService;
       session.client = new Client(
         `unix:${socket}`,
@@ -219,6 +220,7 @@ export class SimulatorSession {
           });
         }),
       );
+      signal?.throwIfAborted();
       let polling = false;
       const pollOrientation = () => {
         if (polling || session.closed) return;
