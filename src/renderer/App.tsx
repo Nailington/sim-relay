@@ -50,6 +50,7 @@ import { demoHosts, demoInventory } from './demo';
 import { DiagnosticsModal } from './DiagnosticsModal';
 import { explainFailure, redactSecrets } from '../shared/diagnostics';
 import { PairModal, CreateModal, HostModal, ActionModal } from './dialogs';
+import { UpdatesModal, useUpdates } from './UpdatesModal';
 
 const empty: Inventory = { devices: [], runtimes: [], devicetypes: [] };
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,6 +60,7 @@ type ModalKind =
   | 'create'
   | 'host'
   | 'help'
+  | 'updates'
   | 'url'
   | 'command'
   | 'location'
@@ -67,6 +69,7 @@ type ModalKind =
 
 export function App() {
   const api = window.relay;
+  const updates = useUpdates(api);
   const [demo, setDemo] = useState(!api);
   const [hosts, setHosts] = useState<HostEntry[]>([]);
   const [host, setHost] = useState<HostEntry | undefined>(!api ? demoHosts[0] : undefined);
@@ -621,6 +624,9 @@ export function App() {
             <IconButton label="Connection and keyboard help" onClick={() => setModal('help')}>
               <CircleHelp size={18} />
             </IconButton>
+            <button className="button quiet" onClick={() => setModal('updates')}>
+              Updates{updates.result?.state === 'available' ? ' available' : ''}
+            </button>
             {host && !demo && (
               <details className="host-menu">
                 <summary aria-label="Mac options" title="Mac options">
@@ -673,6 +679,19 @@ export function App() {
             <button className="button secondary small" onClick={() => setModal('diagnostics')}>
               Diagnostics
             </button>
+            {failure.stage === 'authentication' &&
+              host?.source === 'saved' &&
+              !/Permission required:|permissions changed on the Mac/i.test(error) && (
+                <button
+                  className="button secondary small"
+                  onClick={() => {
+                    setPairUrl(host.url);
+                    setModal('pair');
+                  }}
+                >
+                  Pair again
+                </button>
+              )}
             <IconButton label="Dismiss error" onClick={() => setError('')}>
               <X size={16} />
             </IconButton>
@@ -1158,6 +1177,9 @@ export function App() {
         />
       )}
       {modal === 'host' && <HostModal api={api} onClose={closeModal} />}
+      {modal === 'updates' && (
+        <UpdatesModal api={api} host={host} updates={updates} onClose={closeModal} />
+      )}
       {modal === 'help' && (
         <Modal
           title="Setup and input help"

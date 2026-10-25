@@ -129,9 +129,19 @@ export function PairModal({
             </label>
             <p className="field-hint">
               {probe.info.clientAuthorization
-                ? 'The one-time code authorizes this computer to control the Mac’s simulators. Its saved credential uses your operating system’s secure storage; without it, pairing lasts for this session.'
+                ? 'Each device pairs separately. After pairing, the Mac owner grants simulator and action permissions in Authorized clients. Refresh the code on the Mac after each use. Desktop credentials use secure storage when available; browser credentials remain in this browser’s saved setup.'
                 : 'This older host uses a shared pairing code. Saved pairing data uses your operating system’s secure storage; without it, pairing lasts for this session. Update the host for separate client authorization.'}
             </p>
+            {probe.info.clientAuthorization && (
+              <div className="info-box">
+                <p>
+                  Upgraded from 0.1.5? Old shared-code pairings no longer work with protocol 2. Pair
+                  each device again using the current code from Share this Mac or{' '}
+                  <code>sim-relay-host pairing</code>. Keep the host’s certificate and simulator
+                  data; verify the fingerprint above.
+                </p>
+              </div>
+            )}
             {(!probe.info.companion || !probe.info.xcode) && (
               <p className="inline-error">
                 The host needs {!probe.info.xcode ? 'Xcode' : 'idb_companion'} before it can stream

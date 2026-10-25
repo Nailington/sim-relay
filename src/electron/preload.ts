@@ -27,6 +27,9 @@ ipcRenderer.on('notice', (_event, notice) => {
     mediaNotices.clear();
 });
 const api: DesktopApi = {
+  updatePreferencesKey: 'sim-relay.updates.v1',
+  checkUpdates: (channel) => ipcRenderer.invoke('check-updates', channel),
+  openUpdateLink: (url) => ipcRenderer.invoke('open-update-link', url),
   diagnostics: (id) => ipcRenderer.invoke('diagnostics', id),
   exportDiagnostics: (report) => ipcRenderer.invoke('export-diagnostics', report),
   copyText: (text) => ipcRenderer.invoke('copy-text', text),

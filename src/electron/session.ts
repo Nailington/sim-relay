@@ -1,10 +1,12 @@
 import type { InputEvent, StreamNotice } from '../shared/types';
+import { recoveryMessages } from '../shared/migration';
 
 export const RETRY_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000] as const;
 export class SessionFailure extends Error {
   constructor(
     message: string,
     public readonly terminal = false,
+    public readonly code?: string,
   ) {
     super(message);
   }
@@ -167,10 +169,14 @@ export class RelaySession {
           if (notice.type === 'error') {
             fail(
               new SessionFailure(
-                notice.message ?? 'The host stopped streaming.',
+                notice.code === 'permission_denied'
+                  ? recoveryMessages.permission_denied
+                  : (notice.message ?? 'The host stopped streaming.'),
                 notice.terminal === true ||
                   notice.code === 'authorization_required' ||
+                  notice.code === 'permission_denied' ||
                   terminalFailure({ message: notice.message }),
+                notice.code,
               ),
             );
             return;
@@ -197,8 +203,15 @@ export class RelaySession {
           new SessionFailure(
             code === 4003
               ? 'Authorization was revoked. Pair with this Mac again.'
-              : 'Connection interrupted. Waiting for the original Mac and simulator.',
-            code === 4003,
+              : code === 4004
+                ? 'Permissions changed on the Mac. Reconnect to use the current access.'
+                : 'Connection interrupted. Waiting for the original Mac and simulator.',
+            code === 4003 || code === 4004,
+            code === 4003
+              ? 'authorization_required'
+              : code === 4004
+                ? 'permission_denied'
+                : undefined,
           ),
         ),
       );

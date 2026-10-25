@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, dialog, Menu, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, safeStorage, dialog, Menu, clipboard, shell } from 'electron';
 import { Bonjour } from 'bonjour-service';
 import { WebSocket } from 'ws';
 import { randomUUID, X509Certificate } from 'node:crypto';
@@ -16,6 +16,8 @@ import type { MediaAction, QualityLimits } from '../shared/media';
 import { inputSchema } from '../host/protocol';
 import { RelaySession, SessionFailure, SessionRouter } from './session';
 import { parseHostInfo } from '../shared/host-info';
+import { createUpdateChecker } from '../shared/update-checker';
+import { releaseLink } from '../shared/updates';
 import type {
   DisplayContext,
   HostEntry,
@@ -318,6 +320,18 @@ async function detach(owner: BrowserWindow, context: DisplayContext) {
 }
 async function main() {
   await mkdir(app.getPath('userData'), { recursive: true });
+  const checkUpdates = createUpdateChecker({
+    currentVersion: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    installation: process.execPath.startsWith('/nix/store/') ? 'nix' : 'unknown',
+  });
+  handle('check-updates', checkUpdates);
+  handle('open-update-link', async (url: string) => {
+    if (typeof url !== 'string' || !releaseLink(url))
+      throw new Error('Open an official Sim Relay release link.');
+    await shell.openExternal(url);
+  });
   secureStorageAvailable =
     (await safeStorage.isAsyncEncryptionAvailable().catch(() => false)) &&
     !(

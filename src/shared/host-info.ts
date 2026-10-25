@@ -3,7 +3,7 @@ import type { HostInfo } from './types';
 
 // Increment only when the HTTPS/WebSocket API makes a breaking change.
 export const HOST_PROTOCOL_VERSION = 2;
-const legacyVersions = new Set(['0.1.0', '0.1.1', '0.1.2', '0.1.3']);
+const legacyVersions = new Set(['0.1.0', '0.1.1', '0.1.2', '0.1.3', '0.1.4', '0.1.5']);
 const hostInfoSchema = z.object({
   name: z.string().min(1).max(255),
   platform: z.literal('macOS'),
@@ -29,7 +29,7 @@ export function parseHostInfo(value: unknown): HostInfo {
       );
   } else if (![1, HOST_PROTOCOL_VERSION].includes(info.protocolVersion)) {
     throw new Error(
-      `Host ${info.version} uses connection protocol ${info.protocolVersion}; this client supports ${HOST_PROTOCOL_VERSION}. Update Sim Relay on the client and host Mac.`,
+      `Host ${info.version} uses connection protocol ${info.protocolVersion}; this client supports protocols 1 and ${HOST_PROTOCOL_VERSION}. Update this client first if the Mac uses a newer protocol. Update the host if it uses an unsupported older protocol. Keep the host state and certificate.`,
     );
   }
   return info;
