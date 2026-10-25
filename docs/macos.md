@@ -89,11 +89,11 @@ is kept separately. Homebrew also stops and removes the background host service 
    macOS 15.7.1, Xcode 26.0.1, iOS 26, and companion 1.7.7. Other Xcode/companion combinations,
    particularly Intel hosts, still need compatibility testing.
 
-4. Open **Sim Relay → Set up a Mac host → Start sharing**. Check the dependency readiness
+4. Open **Share this Mac → Start background host** in Sim Relay. Check the dependency readiness
    shown there. Allow **Local Network** access when requested and allow incoming app
    connections in the macOS firewall. The default host endpoint uses TCP port **49300**;
    Bonjour discovery uses mDNS. You do not need router port forwarding for a local network.
-5. Keep the Mac awake and the host app running. On the client, select the Mac or enter its
+5. Keep the host Mac logged in. The background host continues when the GUI closes. On the client, select the Mac or enter its
    address, compare the certificate fingerprint with the host, and enter the host's pairing
    token. Select or create a simulator, then **Start & connect**.
 
@@ -103,8 +103,8 @@ Thunderbolt networking, or SSH tunnels, see [connection instructions](../README.
 
 For a Terminal host, run `sim-relay-host` instead of starting sharing in the desktop app.
 Use `sim-relay-host --help` for settings and `sim-relay-host --version` to check the installed
-version. Only run one host at a time; the desktop host and CLI use the same default port
-but keep separate pairing state.
+version. The GUI and background CLI share saved configuration and authorization state.
+Only run one host at a time. See [host management](host-management.md) for settings and client access.
 
 ## Run the host in the background
 
@@ -115,13 +115,15 @@ sim-relay-host start
 ```
 
 You can close Terminal and the Sim Relay desktop app. The host runs as your macOS user,
-restarts if it crashes, and starts again when you log into the Mac. The Mac must stay
-awake, and you must stay logged into the desktop to use its simulators. No administrator
+restarts if it crashes. Enable starting at login explicitly with `sim-relay-host login on`.
+The Mac must remain available, and you must stay logged into the desktop to use its simulators. No administrator
 password or `sudo` is needed for background commands. `sim-relay-host --background` is
 an alias for `start`.
 
 ```sh
-sim-relay-host status   # Show readiness, addresses, pairing token, and fingerprint
+sim-relay-host status   # Show observed readiness, addresses, version, and fingerprint
+sim-relay-host pairing  # Explicitly retrieve the current single-use pairing code
+sim-relay-host login on # Enable starting at login
 sim-relay-host logs     # Show the last 50 lines of output
 sim-relay-host restart  # Restart with the saved settings
 sim-relay-host stop     # Stop now and disable starting at login
@@ -130,26 +132,17 @@ sim-relay-host stop     # Stop now and disable starting at login
 `start` waits for the host to become ready. Running it again does not create another host.
 `status` exits with code 1 when the background host is stopped or not ready. To run in
 Terminal instead, use `sim-relay-host serve` or run `sim-relay-host` without arguments.
-Stop the background host before starting a foreground host or sharing in the desktop app.
+Stop the background host before starting a foreground host. The GUI manages the same background service.
 
-Set options when starting the service; it remembers them for subsequent restarts:
+On first setup, environment options initialize the saved service settings. Later, stop the
+host and edit **Share this Mac → Service settings**, or use `sim-relay-host settings` and
+`sim-relay-host configure JSON`. Restart and stop/start retain custom state directories,
+ports, bind addresses, companion paths, and audio opt-in. Stop disables login launch.
 
-```sh
-SIM_RELAY_BIND=127.0.0.1 SIM_RELAY_PORT=49301 sim-relay-host start
-# To change a running service's settings:
-SIM_RELAY_PORT=49302 sim-relay-host restart
-```
-
-The same applies to `SIM_RELAY_STATE_DIR` and `IDB_COMPANION_PATH`. Use an absolute path
-for a custom companion. Starting again after `stop` uses defaults and any options you set
-in that command. Keep the app installed in its current location; after moving it or
-upgrading, run `sim-relay-host restart` (or `start` if Homebrew stopped it during the upgrade).
-
-The service configuration is `~/Library/LaunchAgents/dev.simrelay.host.plist`. Output is
-stored in `~/Library/Logs/Sim Relay/host.log`, readable only by your user. Logs contain
-pairing details, so keep them private. `stop` leaves logs and pairing state intact.
-Stop the service before removing a manually installed app. Homebrew uninstall stops it
-and removes its service configuration; `--zap` also removes its logs.
+Status, logs, and startup output do not print pairing codes. Use the explicit `pairing`
+command or the GUI's reveal/copy controls. Logs from older versions may contain obsolete
+startup codes. See [host management](host-management.md) for storage locations, local client
+revocation, active-session keep-awake, and the acknowledged upgrade handoff.
 
 For source development, clone this repository, install Node.js 24, and run
 `npm ci` followed by `npm run host` or `npm run dev`. Nix users can use the

@@ -11,12 +11,13 @@ export async function createKeepAwake(
   directory: string,
   dependencies: {
     platform?: string;
+    initialEnabled?: boolean;
     start?: () => ChildProcess;
     memory?: () => { free: number; total: number };
   } = {},
 ) {
   const file = path.join(directory, 'keep-awake.json');
-  let enabled = process.env.SIM_RELAY_KEEP_AWAKE === '1';
+  let enabled = dependencies.initialEnabled ?? process.env.SIM_RELAY_KEEP_AWAKE === '1';
   try {
     const value = JSON.parse(await readFile(file, 'utf8'));
     if (value.version !== 1 || typeof value.enabled !== 'boolean')
@@ -38,21 +39,28 @@ export async function createKeepAwake(
     assertion = undefined;
     active = false;
     if (!child) return;
-    retirement = retirement.then(() => new Promise<void>((resolve) => {
-      if (child.exitCode !== null || child.signalCode !== null) return resolve();
-      child.once('exit', () => resolve());
-      child.once('error', () => resolve());
-      child.kill('SIGTERM');
-    }));
+    retirement = retirement.then(
+      () =>
+        new Promise<void>((resolve) => {
+          if (child.exitCode !== null || child.signalCode !== null) return resolve();
+          child.once('exit', () => resolve());
+          child.once('error', () => resolve());
+          child.kill('SIGTERM');
+        }),
+    );
   };
   const update = () => {
     if (closed || !enabled || !sessions || !supported) return release();
     if (assertion) return;
     failure = undefined;
-    const child = (dependencies.start ?? (() =>
-      spawn('/usr/bin/caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore' })))();
+    const child = (
+      dependencies.start ??
+      (() => spawn('/usr/bin/caffeinate', ['-i', '-w', String(process.pid)], { stdio: 'ignore' }))
+    )();
     assertion = child;
-    child.once('spawn', () => { if (assertion === child) active = true; });
+    child.once('spawn', () => {
+      if (assertion === child) active = true;
+    });
     child.once('error', () => {
       if (assertion !== child) return;
       assertion = undefined;
@@ -71,10 +79,15 @@ export async function createKeepAwake(
     snapshot(): KeepAwakeStatus {
       const memory = (dependencies.memory ?? (() => ({ free: freemem(), total: totalmem() })))();
       return {
-        enabled, active, activeSessions: sessions, supported, error: failure,
-        warning: sessions > 1 && memory.free < Math.min(1024 ** 3, memory.total * 0.08)
-          ? 'Available memory is low with multiple active simulators. Disconnect a display or shut down an unused simulator on the Mac.'
-          : undefined,
+        enabled,
+        active,
+        activeSessions: sessions,
+        supported,
+        error: failure,
+        warning:
+          sessions > 1 && memory.free < Math.min(1024 ** 3, memory.total * 0.08)
+            ? 'Available memory is low with multiple active simulators. Disconnect a display or shut down an unused simulator on the Mac.'
+            : undefined,
       };
     },
     setEnabled(value: boolean): Promise<void> {

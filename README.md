@@ -134,11 +134,12 @@ checkout is needed. See the [macOS guide](docs/macos.md) for details. Source dev
 still use `npm ci` followed by `npm run host`.
 
 To keep sharing after closing Terminal, use `sim-relay-host start`. It runs in the
-background and starts again at login. Use `sim-relay-host status` for pairing details,
+background. Enable login launch explicitly with `sim-relay-host login on`. Use
+`sim-relay-host status` for observed readiness and `sim-relay-host pairing` for the current code,
 `sim-relay-host logs` for recent output, and `sim-relay-host stop` to stop sharing and
 disable starting at login. See [background host setup](docs/macos.md#run-the-host-in-the-background).
 
-Keep the Mac awake and the host running. It shows its address, pairing token, SHA-256
+Keep the Mac available and the host running. It shows its address and SHA-256
 certificate fingerprint, and dependency readiness. Allow incoming connections through the
 Mac's firewall for LAN access. Default port: TCP **49300**. Discovery uses Bonjour/mDNS.
 On macOS, allow Local Network access when requested; see [Apple’s local network privacy guide](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
