@@ -56,7 +56,7 @@ Homebrew's conventional `homebrew-sim-relay`. To upgrade:
 
 ```sh
 brew update
-brew upgrade --cask nailington/sim-relay/sim-relay
+sim-relay-upgrade
 ```
 
 Homebrew does not install Xcode or `idb_companion` for client-only use. It also does not
@@ -259,3 +259,43 @@ xcrun stapler validate "/Applications/Sim Relay.app"
 
 The Nix package continues to use the nixpkgs Electron runtime and is built independently;
 Apple signing credentials apply to the downloadable DMG/ZIP releases.
+
+## Preserve a background host during a Homebrew upgrade
+
+Use `sim-relay-upgrade` as the logged-in Mac user without sudo. This coordinated wrapper
+stops only the app-owned background host before Homebrew replaces its files, then invokes
+`upgrade resume` through the stable installed `sim-relay-host` launcher after Homebrew
+returns success. Only a previously running host restarts. A stopped host stays stopped;
+its explicit start-at-login preference and saved configuration remain unchanged.
+
+The host's `upgrade prepare` records the prior running/login state in a private handoff,
+then awaits graceful listener, companion, recording and audio cleanup. It refuses an
+unrelated foreground host or unverified ownership. Configuration, port/bind/state directory,
+helper paths and audio choices stay in their existing state; certificates, client pairings,
+and credentials are not copied into wrapper logs or cask definitions. Clients disconnect
+and active recordings stop during this interruption. Save recordings before upgrading.
+
+If prepare fails, Homebrew is not run. If Homebrew fails or the wrapper is interrupted,
+the host stays stopped; no automatic rollback restart is attempted. Verify or repair the
+installed app, then run `sim-relay-host upgrade resume`. Restart/readiness failures also
+return failure and retain recovery state. Use `sim-relay-host logs` and
+`sim-relay-host status` to diagnose them. An interrupted wrapper can leave
+`~/Library/Application Support/Sim Relay/homebrew-upgrade.lock`; remove that empty directory
+only after verifying no other wrapper/Homebrew process is active. `upgrade abort` records
+the stopped handoff and prints recovery instructions; it does not discard the saved state.
+
+The wrapper is the supported coordinated path. Plain `brew upgrade`, bulk upgrades,
+automatic Homebrew jobs, manual Finder replacement and older releases without the handoff
+commands do not provide this guarantee. For those paths, stop the host yourself before
+replacement and start it explicitly afterward. For the first upgrade from a release that
+lacks the wrapper, do that once; use the wrapper for later upgrades. If you run the web
+launch agent too, stop it separately before replacement and restart it afterward.
+
+Research checked 2026-10-25: the official [Homebrew Cask Cookbook](https://docs.brew.sh/Cask-Cookbook#stanza-flight_steps)
+documents constrained `preflight_steps`, `postflight_steps`, and uninstall equivalents;
+legacy arbitrary Ruby blocks remain temporary third-party compatibility. Structured steps
+run under sandbox limits, including home-directory/Mach-service restrictions. They do not
+provide a general transactional upgrade/rollback callback. This cask therefore links a
+coordinated wrapper rather than inventing an `upgrade_preflight` hook or terminating
+processes by name. The native Homebrew/launchd upgrade acceptance still requires a real Mac;
+portable wrapper fixtures establish ordering and failure behavior only.

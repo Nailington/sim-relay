@@ -88,6 +88,22 @@
         {
           "from": "packaging/macos/sim-relay-host",
           "to": "bin/sim-relay-host"
+        },
+        {
+          "from": "dist-web",
+          "to": "web"
+        },
+        {
+          "from": "packaging/macos/sim-relay-web",
+          "to": "bin/sim-relay-web"
+        },
+        {
+          "from": "packaging/macos/sim-relay-upgrade",
+          "to": "bin/sim-relay-upgrade"
+        },
+        {
+          "from": "packaging/services",
+          "to": "services"
         }
       ]
     },
@@ -107,7 +123,21 @@
       "category": "Development",
       "maintainer": "Nailington <Nailington@users.noreply.github.com>",
       "syncDesktopName": true,
-      "artifactName": "Sim-Relay-${version}-linux-${arch}.${ext}"
+      "artifactName": "Sim-Relay-${version}-linux-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "dist-web",
+          "to": "web"
+        },
+        {
+          "from": "packaging/linux/sim-relay-web",
+          "to": "bin/sim-relay-web"
+        },
+        {
+          "from": "packaging/services",
+          "to": "services"
+        }
+      ]
     },
     "icon": "assets/app-icon.png",
     "deb": {
@@ -115,7 +145,8 @@
     },
     "rpm": {
       "packageName": "sim-relay"
-    }
+    },
+    "executableName": "sim-relay"
   },
   "overrides": {
     "global-agent": "^4.1.3"

@@ -8,7 +8,7 @@ framebuffer and send native input over an encrypted connection. No cloud account
 iPhone is required.
 
 For devices without the desktop app, run an authenticated [self-hosted browser service](docs/browser-hosting.md)
-with `npm run web` after building. Each browser keeps its own saved Macs and workspace;
+with the installed `sim-relay-web` command (macOS/Linux releases or Nix). Each browser keeps its own saved Macs and workspace;
 the hosting service relays pinned, authenticated connections to allowlisted Mac hosts.
 
 This is a working first version, **not yet complete parity with the native Mac Simulator**.
@@ -50,7 +50,7 @@ npm run dev
 `npm run dev` opens an Electron window and starts its UI development server. `npm run dev:ui`
 opens only the UI preview, which uses clearly labeled, simulated demo data. Desktop connections
 use Electron's isolated native bridge. For real browser connections, build the app and run the
-[authenticated web service](docs/browser-hosting.md) with `npm run web`; the UI preview alone
+[authenticated web service](docs/browser-hosting.md) with `sim-relay-web` (or `npm run web` in a built source checkout); the UI preview alone
 does not run that relay.
 
 ## Install with Nix

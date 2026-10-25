@@ -3,6 +3,7 @@ import { build, Platform, Arch } from 'electron-builder';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { checkPackagedApp } from './check-packaged-app.mjs';
 
 const [platform, arch] = process.argv.slice(2);
 const platforms = { mac: Platform.MAC, windows: Platform.WINDOWS, linux: Platform.LINUX };
@@ -41,6 +42,7 @@ try {
     publish: 'never',
     config: {
       forceCodeSigning: signed,
+      afterPack: checkPackagedApp,
       ...(platform === 'mac'
         ? {
             mac: signed

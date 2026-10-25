@@ -59,14 +59,18 @@ cask "sim-relay" do
 
   app "Sim Relay.app"
   binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"
+  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-web"
+  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-upgrade"
 
-  uninstall launchctl: "dev.simrelay.host"
+  uninstall launchctl: ["dev.simrelay.host", "dev.simrelay.web"]
 
   zap trash: [
     "~/Library/Application Support/Sim Relay",
     "~/Library/Application Support/ios-sim-stream",
     "~/Library/Logs/Sim Relay",
   ]
+
+  caveats "Use sim-relay-upgrade for background-host upgrades. See https://github.com/${repository}/blob/v${version}/docs/macos.md"
 end
 `;
 }
@@ -123,7 +127,7 @@ export async function assembleRelease({
       `macOS: ${macSigned ? 'Developer ID signed and notarized.' : 'ad-hoc signed; not notarized. See the macOS installation guide before opening.'}`,
       `Windows: ${windowsSigned ? 'certificate signed.' : 'unsigned; Windows may display a publisher warning.'}`,
       `Installation and Mac host setup: https://github.com/${repository}/blob/v${version}/docs/macos.md`,
-      'SHA256SUMS covers every attached installer and metadata file. The app does not auto-update; install a newer release or use brew upgrade.',
+      'SHA256SUMS covers every attached installer and metadata file. The app does not auto-update; install a newer release or use sim-relay-upgrade for a coordinated Homebrew background-host upgrade.',
     ].join('\n\n') + '\n'
   );
 }
