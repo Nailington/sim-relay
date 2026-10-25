@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { DesktopApi, HostEntry } from '../shared/types';
 import { macAddresses, MAX_MAC_ADDRESSES } from '../shared/mac-routes';
 import { redactSecrets } from '../shared/diagnostics';
+import { recordingActionCancelled } from '../shared/recording-protection';
 import { Busy, Modal } from './components';
 import './mac-routes.css';
 
@@ -44,7 +45,8 @@ export function MacRoutes({
             : 'Preferred address saved. Reconnect to use it.',
       );
     } catch (failure) {
-      setError(redactSecrets((failure as Error).message));
+      if (!recordingActionCancelled(failure))
+        setError(redactSecrets((failure as Error).message));
     } finally {
       setBusy(false);
     }

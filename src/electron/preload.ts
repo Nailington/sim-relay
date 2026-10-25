@@ -27,6 +27,16 @@ ipcRenderer.on('notice', (_event, notice) => {
     mediaNotices.clear();
 });
 const api: DesktopApi = {
+  onRecordingCloseRequest: (callback) => {
+    const listener = (_event: unknown, action: string) => {
+      void callback(action).then(
+        (allowed) => ipcRenderer.send('recording-close-response', allowed),
+        () => ipcRenderer.send('recording-close-response', false),
+      );
+    };
+    ipcRenderer.on('recording-close-request', listener);
+    return () => ipcRenderer.removeListener('recording-close-request', listener);
+  },
   updatePreferencesKey: 'sim-relay.updates.v1',
   checkUpdates: (channel) => ipcRenderer.invoke('check-updates', channel),
   openUpdateLink: (url) => ipcRenderer.invoke('open-update-link', url),

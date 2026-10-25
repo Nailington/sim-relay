@@ -49,6 +49,7 @@ export function Modal({
       (elements().find((el) => el.tagName === 'INPUT') ?? elements()[0])?.focus();
     }, 20);
     const key = (e: KeyboardEvent) => {
+      if (document.querySelector('dialog.recording-protection[open]')) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();

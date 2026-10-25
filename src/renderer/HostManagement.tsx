@@ -1,3 +1,4 @@
+import { recordingActionCancelled } from '../shared/recording-protection';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Eye, EyeOff, RefreshCw, ShieldCheck } from 'lucide-react';
 import { Modal, Busy } from './components';
@@ -105,7 +106,8 @@ export function HostManagement({ api, onClose }: { api?: DesktopApi; onClose(): 
       await action();
       if (mounted.current && message) setNotice(message);
     } catch (e) {
-      if (mounted.current) setError(redactSecrets((e as Error).message));
+      if (mounted.current && !recordingActionCancelled(e))
+        setError(redactSecrets((e as Error).message));
     } finally {
       changing.current = false;
       if (mounted.current) {

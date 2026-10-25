@@ -1,3 +1,4 @@
+import { hasUnsavedRecording } from '../shared/recording-protection';
 import https from 'node:https';
 import { randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
@@ -274,6 +275,10 @@ export class ClientMedia {
       return true;
     }
     return false;
+  }
+  get hasUnsavedRecording() {
+    const notice = this.notices.get('recording');
+    return notice?.type === 'recording' && hasUnsavedRecording(notice.recording);
   }
   async save(choose: () => Promise<string | undefined>): Promise<boolean> {
     if (this.saving) throw new Error('A recording save is already in progress.');

@@ -1,3 +1,5 @@
+import { recordingGuard, invalidateRecordingProtection } from './recording-guard';
+import { RecordingActionCancelled } from '../shared/recording-protection';
 import type { DesktopApi, Profile, Probe, StreamNotice } from '../shared/types';
 import { releaseLink } from '../shared/updates';
 import { browserSession } from './browser-session';
@@ -17,6 +19,7 @@ const lifetimes = new WeakMap<DesktopApi, () => void>();
 const accounts = new WeakMap<DesktopApi, BrowserAccount>();
 export function disposeBrowserApi(api?: DesktopApi) {
   if (api) {
+    invalidateRecordingProtection(api);
     lifetimes.get(api)?.();
     lifetimes.delete(api);
   }
@@ -25,6 +28,8 @@ export async function signOutBrowserApi(api: DesktopApi) {
   const account = accounts.get(api);
   if (!account) throw new Error('Open this workspace again to sign out.');
   await account.verify();
+  if (!(await recordingGuard(api).confirm('Sign out'))) throw new RecordingActionCancelled();
+  account.assertCurrent();
   announceBrowserAccount();
   await webCall('logout', {}, account.user);
   disposeBrowserApi(api);
@@ -33,6 +38,9 @@ export async function resetBrowserApi(api: DesktopApi) {
   const account = accounts.get(api);
   if (!account) throw new Error('Open this workspace again before clearing its saved setup.');
   await account.verify();
+  if (!(await recordingGuard(api).confirm('Clear saved setup')))
+    throw new RecordingActionCancelled();
+  account.assertCurrent();
   await api.disconnect();
   account.assertCurrent();
   await clearBrowserWorkspace(account.user);
@@ -97,6 +105,7 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
   const lifetime = new AbortController();
   let stop = () => {};
   const account = createBrowserAccount(user, lifetime.signal, () => {
+    invalidateRecordingProtection(api);
     stop();
     lifetime.abort();
     onInvalidated?.();
@@ -201,6 +210,13 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
     editMacAddress(original, action, value);
     if (action === 'add')
       await call('verify-address', () => ({ profile: get(id), url: macAddress(value) }));
+    if (
+      session.target?.hostId === id &&
+      (action === 'prefer' ||
+        (action === 'remove' && original.currentRoute === macAddress(value))) &&
+      !(await recordingGuard(api).confirm('Change this Mac’s connection address'))
+    )
+      throw new RecordingActionCancelled();
     let result: Profile = original;
     await storageMutation(key, () => {
       account.assertCurrent();
@@ -338,8 +354,19 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
         token,
         source: 'saved',
       };
+      const protectPairing = async () => {
+        if (
+          previous &&
+          session.target?.hostId === previous.id &&
+          !(await recordingGuard(api).confirm('Pair this Mac again'))
+        )
+          throw new RecordingActionCancelled();
+        stillPairing();
+      };
+      await protectPairing();
       const paired = await call<Profile>('pair', () => ({ profile: proposed }));
       stillPairing();
+      await protectPairing();
       // Reconcile after the asynchronous exchange: another tab may have reset or changed storage.
       await storageMutation(key, () => {
         stillPairing();
@@ -503,7 +530,7 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
   });
   const release = () => {
     // Current hosts support release; older hosts receive the explicit UP events from DeviceStage.
-    if (document.visibilityState === 'hidden') void disconnect();
+    if (document.visibilityState === 'hidden') session.input({ type: 'release' });
   };
   document.addEventListener('visibilitychange', release, { signal: lifetime.signal });
   window.addEventListener(

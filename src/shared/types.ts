@@ -119,6 +119,7 @@ export interface HostStatus {
   addresses?: string[];
 }
 export interface DesktopApi {
+  onRecordingCloseRequest?(callback: (action: string) => Promise<boolean>): () => void;
   updatePreferencesKey?: string;
   checkUpdates?(
     channel: import('./updates').UpdateChannel,

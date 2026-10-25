@@ -6,6 +6,7 @@ import { createServiceManager } from '../host/service-manager';
 export function registerHostManagement(
   handle: (channel: string, action: (...args: any[]) => unknown) => void,
   manager: ReturnType<typeof createServiceManager>,
+  beforeStop: (action: 'stop' | 'restart') => Promise<void> = async () => {},
 ) {
   const id = z.string().uuid();
   const permissions = z
@@ -32,9 +33,11 @@ export function registerHostManagement(
     })
     .strict();
   handle('host-management-status', () => manager.status());
-  handle('host-management-action', (action: unknown) =>
-    manager.action(z.enum(['start', 'stop', 'restart']).parse(action)),
-  );
+  handle('host-management-action', async (action: unknown) => {
+    const value = z.enum(['start', 'stop', 'restart']).parse(action);
+    if (value !== 'start') await beforeStop(value);
+    return manager.action(value);
+  });
   handle('host-management-settings', (value: unknown) =>
     manager.saveSettings(settings.parse(value)),
   );

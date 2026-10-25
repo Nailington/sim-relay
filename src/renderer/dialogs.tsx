@@ -1,3 +1,4 @@
+import { recordingActionCancelled } from '../shared/recording-protection';
 import { useState, type FormEvent } from 'react';
 import { ArrowRight, ArrowUpRight, Monitor, Plus, ShieldCheck, Terminal } from 'lucide-react';
 import type { DesktopApi, HostEntry, Inventory, Probe, Simulator } from '../shared/types';
@@ -219,6 +220,7 @@ export function CreateModal({
               runtime,
             });
           } catch (e) {
+            if (recordingActionCancelled(e)) return;
             const failure = explainFailure(e, 'action');
             setError(
               `${failure.title}. ${failure.next} Technical details: ${redactSecrets((e as Error).message)}`,
@@ -409,6 +411,7 @@ export function ActionModal({
               onClose();
             }
           } catch (e) {
+            if (recordingActionCancelled(e)) return;
             const failure = explainFailure(e, 'action');
             setError(
               `${failure.title}. ${failure.next} Technical details: ${redactSecrets((e as Error).message)}`,

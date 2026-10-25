@@ -1,3 +1,5 @@
+import { RecordingActionCancelled, requestMayLoseRecording } from '../shared/recording-protection';
+import { recordingCloseProtection } from './recording-close';
 import { app, BrowserWindow, ipcMain, safeStorage, dialog, Menu, clipboard, shell } from 'electron';
 import { Bonjour } from 'bonjour-service';
 import { WebSocket } from 'ws';
@@ -111,6 +113,24 @@ async function saveProfiles() {
     secureStorageAvailable = false;
     return false;
   }
+}
+function windowHasUnsavedRecording(owner: BrowserWindow) {
+  const session = sessions.get(owner.id);
+  return !!session && !!mediaBySession.get(session)?.hasUnsavedRecording;
+}
+const recordingClose = recordingCloseProtection(windowHasUnsavedRecording);
+async function protectRecordingOwners(action: string, hostId?: string, udid?: string) {
+  const owners = () =>
+    [...windows.values()].filter(
+      (owner) =>
+        (!hostId || sessions.get(owner.id)?.target?.hostId === hostId) &&
+        (!udid || sessions.get(owner.id)?.target?.udid === udid),
+    );
+  if (
+    !(await recordingClose.confirmOwners(owners(), action)) ||
+    owners().some(windowHasUnsavedRecording)
+  )
+    throw new RecordingActionCancelled();
 }
 function disconnect(owner: BrowserWindow) {
   canceledSelections.set(owner.id, (canceledSelections.get(owner.id) ?? 0) + 1);
@@ -308,6 +328,7 @@ function createWindow(display = false) {
     },
   });
   windows.set(owner.id, owner);
+  recordingClose.protect(owner);
   owner.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   owner.webContents.on('will-navigate', (event) => event.preventDefault());
   owner.webContents.on('will-attach-webview', (event) => event.preventDefault());
@@ -461,7 +482,9 @@ async function main() {
       token: token.trim(),
       source: 'saved',
     };
+    if (previous) await protectRecordingOwners('Pair this Mac again', previous.id);
     entry = await pairRemoteClient(entry, probe, `${hostname()} (${process.platform})`);
+    if (previous) await protectRecordingOwners('Pair this Mac again', previous.id);
     for (const [, session] of sessions.entries())
       if (session.target?.hostId === entry.id) session.disconnect();
     profiles.set(entry.id, entry);
@@ -475,17 +498,21 @@ async function main() {
       if (action === 'add') await verifyMacAddress(original, value);
       if (profiles.get(id) !== original)
         throw new Error('Saved pairing changed. Reopen its addresses.');
-      const next = editMacAddress(original, action, value);
       if (
         action === 'prefer' ||
         (action === 'remove' && original.currentRoute === hostUrl(value).origin)
       ) {
+        await protectRecordingOwners('Change this Mac’s connection address', id);
+        if (profiles.get(id) !== original)
+          throw new Error('Saved pairing changed. Reopen its addresses.');
         for (const [, session] of sessions.entries()) {
           if (session.target?.hostId !== id) continue;
           session.disconnect();
           void mediaBySession.get(session)?.close();
         }
       }
+      // Recompute after an owner decision; another address edit may have completed meanwhile.
+      const next = editMacAddress(original, action, value);
       // Keep the existing profile object live for recording downloads and active displays.
       Object.assign(original, next);
       original.sessionOnly = !(await saveProfiles());
@@ -493,6 +520,7 @@ async function main() {
     });
   }
   handle('forget', async (id: string) => {
+    await protectRecordingOwners('Forget this Mac', id);
     for (const [, session] of sessions.entries())
       if (session.target?.hostId === id) session.disconnect();
     profiles.delete(id);
@@ -508,9 +536,15 @@ async function main() {
       await writeFile(file, JSON.stringify(entries.filter((p) => p.id !== id)), { mode: 0o600 });
     }
   });
-  handle('request', async (id: string, method: string, pathname: string, body?: unknown) =>
-    JSON.parse((await remoteRequest(profile(id), method, pathname, body)).toString()),
-  );
+  handle('request', async (id: string, method: string, pathname: string, body?: unknown) => {
+    if (requestMayLoseRecording(method, pathname, body))
+      await protectRecordingOwners(
+        'Run this simulator action',
+        id,
+        /^\/devices\/([^/]+)\//.exec(pathname)?.[1],
+      );
+    return JSON.parse((await remoteRequest(profile(id), method, pathname, body)).toString());
+  });
   handle(
     'connect',
     async (owner: BrowserWindow, id: string, udid: string, fps: number) => {
@@ -687,13 +721,18 @@ async function main() {
     const parsed = inputSchema.safeParse(input);
     if (parsed.success) sessions.get(owner.id)?.input(parsed.data);
   });
-  registerHostManagement(handle, hostService);
+  registerHostManagement(handle, hostService, (action) =>
+    protectRecordingOwners(
+      action === 'restart' ? 'Restart sharing this Mac' : 'Stop sharing this Mac',
+    ),
+  );
   handle(
     'host-status',
     async (): Promise<HostStatus> => (await hostService.status()).host ?? { running: false },
   );
   handle('start-host', async () => (await hostService.action('start')).host ?? { running: false });
   handle('stop-host', async () => {
+    await protectRecordingOwners('Stop sharing this Mac');
     await hostService.action('stop');
   });
   handle(
@@ -779,16 +818,30 @@ app
     app.quit();
   });
 let quitting = false;
+let decidingQuit = false;
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', (event) => {
   if (quitting) return;
   event.preventDefault();
-  quitting = true;
-  const cleanups: Promise<unknown>[] = [];
-  for (const [, session] of sessions.entries()) {
-    session.disconnect();
-    cleanups.push(mediaBySession.get(session)?.close() ?? Promise.resolve());
-  }
-  discovery?.destroy();
-  void Promise.allSettled(cleanups).finally(() => app.quit());
+  if (decidingQuit) return;
+  decidingQuit = true;
+  void (async () => {
+    // Keep every session alive until each owner has saved or explicitly discarded.
+    if (
+      !(await recordingClose.confirmOwners([...windows.values()], 'Quit Sim Relay')) ||
+      [...windows.values()].some(windowHasUnsavedRecording)
+    ) {
+      decidingQuit = false;
+      return;
+    }
+    quitting = true;
+    const cleanups: Promise<unknown>[] = [];
+    for (const [, session] of sessions.entries()) {
+      session.disconnect();
+      cleanups.push(mediaBySession.get(session)?.close() ?? Promise.resolve());
+    }
+    discovery?.destroy();
+    await Promise.allSettled(cleanups);
+    app.quit();
+  })();
 });
