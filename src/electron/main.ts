@@ -482,7 +482,9 @@ async function main() {
       token: token.trim(),
       source: 'saved',
     };
+    if (previous) await protectRecordingOwners('Pair this Mac again', previous.id);
     entry = await pairRemoteClient(entry, probe, `${hostname()} (${process.platform})`);
+    if (previous) await protectRecordingOwners('Pair this Mac again', previous.id);
     for (const [, session] of sessions.entries())
       if (session.target?.hostId === entry.id) session.disconnect();
     profiles.set(entry.id, entry);
@@ -496,17 +498,21 @@ async function main() {
       if (action === 'add') await verifyMacAddress(original, value);
       if (profiles.get(id) !== original)
         throw new Error('Saved pairing changed. Reopen its addresses.');
-      const next = editMacAddress(original, action, value);
       if (
         action === 'prefer' ||
         (action === 'remove' && original.currentRoute === hostUrl(value).origin)
       ) {
+        await protectRecordingOwners('Change this Mac’s connection address', id);
+        if (profiles.get(id) !== original)
+          throw new Error('Saved pairing changed. Reopen its addresses.');
         for (const [, session] of sessions.entries()) {
           if (session.target?.hostId !== id) continue;
           session.disconnect();
           void mediaBySession.get(session)?.close();
         }
       }
+      // Recompute after an owner decision; another address edit may have completed meanwhile.
+      const next = editMacAddress(original, action, value);
       // Keep the existing profile object live for recording downloads and active displays.
       Object.assign(original, next);
       original.sessionOnly = !(await saveProfiles());

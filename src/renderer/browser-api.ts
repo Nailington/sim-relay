@@ -210,6 +210,13 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
     editMacAddress(original, action, value);
     if (action === 'add')
       await call('verify-address', () => ({ profile: get(id), url: macAddress(value) }));
+    if (
+      session.target?.hostId === id &&
+      (action === 'prefer' ||
+        (action === 'remove' && original.currentRoute === macAddress(value))) &&
+      !(await recordingGuard(api).confirm('Change this Mac’s connection address'))
+    )
+      throw new RecordingActionCancelled();
     let result: Profile = original;
     await storageMutation(key, () => {
       account.assertCurrent();
@@ -347,8 +354,19 @@ export function createBrowserApi(user: string, onInvalidated?: () => void): Desk
         token,
         source: 'saved',
       };
+      const protectPairing = async () => {
+        if (
+          previous &&
+          session.target?.hostId === previous.id &&
+          !(await recordingGuard(api).confirm('Pair this Mac again'))
+        )
+          throw new RecordingActionCancelled();
+        stillPairing();
+      };
+      await protectPairing();
       const paired = await call<Profile>('pair', () => ({ profile: proposed }));
       stillPairing();
+      await protectPairing();
       // Reconcile after the asynchronous exchange: another tab may have reset or changed storage.
       await storageMutation(key, () => {
         stillPairing();
