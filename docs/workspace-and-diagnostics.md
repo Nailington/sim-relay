@@ -144,14 +144,12 @@ export safety does not depend on a pattern recognizing every possible secret.
   `HostInfo.clientAuthorization` is true. Older hosts get explicit shared-code wording.
   That optional capability is retained by `parseHostInfo`. Legacy hosts
   without an advertised protocol are identified as protocol 1.
-- `package.json` adds `npm test` using Node's runner and tsx, matching the root work. Tests are
-  explicitly tracked despite the repository's existing test ignore rules. No dependency or
-  lockfile changes are required.
+- Regression sources are retained privately under the owner-confirmed [validation policy](private-validation.md). They are not published or invoked by public CI.
 
 ## Validation performed here
 
 - `npm run check` and `npm run build` pass on Linux.
-- `npm test`: 13 diagnostics tests, including a real ephemeral HTTPS server, pinned certificate
+- Private Node regression suite: 13 diagnostics tests, including a real ephemeral HTTPS server, pinned certificate
   verification, invalid credentials, no credential on the bootstrap probe, and no authenticated
   request after a pin mismatch. Other cases cover offline checks, missing dependencies/runtimes,
   protocol failures, event bounds/scoping, strict export validation, omission choices, and detail

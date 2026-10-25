@@ -4,8 +4,12 @@
 push, pull request, and manual run. Its reusable `desktop.yml`
 builds natively on six runners: macOS arm64/x64, Windows arm64/x64, and Linux arm64/x64.
 CI uploads downloadable artifacts for seven days. It also evaluates every flake output and
-builds the x86_64 Linux Nix package. Test suites and test runners stay local and are excluded
-from the published repository and Nix source inputs.
+builds the x86_64 Linux Nix package. Test suites, fixture apps, benchmark runners and test runners stay private and are excluded
+from the published repository, public CI artifacts, installers and Nix source inputs. The owner
+reconfirmed this policy on 2026-10-25 in issue #31. The earlier implementation stack
+accidentally tracked validation sources; that publication was not authorization to change
+the policy. Removing current files does not erase copies in existing Git history.
+See [the private validation workflow](private-validation.md) for regression evidence and release gates.
 
 `.github/workflows/release.yml` runs when a `v*` tag is pushed. It validates the version,
 runs the same complete CI, checks the presence of all fourteen installers, computes SHA-256
@@ -62,7 +66,7 @@ after fixing permissions or a non-fast-forward push.
    it to `lib.fakeHash`, build the flake, and copy the reported actual hash. Stage new source
    files before building a local Git flake. The Nix package version reads `package.json`
    automatically, so there is no separate flake version to edit.
-3. Run `npm run check`, `npm run build`, and `nix build`. Commit the version, lockfile, Nix hash,
+3. Run the private regression workflow, `npm run check`, `npm run build`, and `nix build`. Commit the version, lockfile, Nix hash,
    and any release changes, and push them to the default branch. Let CI pass.
 4. Tag that tested commit and push the tag:
 

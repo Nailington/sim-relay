@@ -150,9 +150,10 @@ pinned Mac credentials against a fake simulator backend. They check independent 
 routing, logout cleanup that leaves the other stream active, rejected cross-origin actions,
 disallowed destinations, certificate-pin failure, and inaccessible state files. Native
 simulator video/audio and physical touch-device/browser combinations still need native
-verification. Run `npm test` for the transport tests and `npm run web -- --help` for settings.
+verification. The transport suite is private; see [private validation](private-validation.md).
+Run `npm run web -- --help` for runtime settings.
 
-`npm run test:browser` builds the actual React frontend and runs headless Electron checks.
+The private browser workflow builds the actual React frontend and runs headless Electron checks.
 The renderer regression uses a deferred fake API: it selects/connects Mac B or restores a
 returned B display while saved Mac A's inventory is pending, then resolves or rejects A's
 requests and obsolete returned-display connection. Assertions cover visible selection,
@@ -170,5 +171,5 @@ is required. A separate shared-partition Chromium smoke uses the actual React si
 reset controls to hold opening authentication across reset/account changes, suppress reset
 event delivery, verify fresh account mounts and permanently invalid old APIs, and switch
 cookies between preflight and action dispatch. Unit coverage also holds a pairing response
-across reset and verifies that a fresh pairing can succeed afterward. Linux CI runs these
-browser checks and the separate native Electron fake-host session smoke.
+across reset and verifies that a fresh pairing can succeed afterward. The private validation workflow runs these browser checks and the separate native Electron
+fake-host session smoke. Public CI runs only the published build/package checks.

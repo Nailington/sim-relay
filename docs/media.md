@@ -61,7 +61,7 @@ when small text needs inspection; reduced quality cannot guarantee identical tex
   rejects browser Origins. A browser client needs the separate authenticated hosting work in
   #5. Its download flow should stream the same recording asset rather than collecting a large Blob.
 
-Run `npm run benchmark:media` with FFmpeg installed. The script renders a deterministic scrolling
+Run the private media benchmark with FFmpeg installed; see [private validation](private-validation.md). The script renders a deterministic scrolling
 1170×2532 Settings-like UI (90 frames/3 seconds), encodes JPEG tiers and software libx264, compares
 SSIM after scaling back to source size, then feeds those actual frame sizes to a 60-second
 deterministic network model using the production adaptive controller. It deletes all temporary
@@ -271,7 +271,7 @@ display capture`. No PCM was persisted; the helper was released. The user chose 
 without audio validation, so no further audio probes were performed. Hearing simulator audio,
 output-device changes, permission grant/revoke behavior, and measured A/V skew remain unresolved.
 
-Repeatable helpers are included: `node scripts/build-media-fixture.mjs /tmp/sim-relay-media-...`
+Repeatable helpers are retained in the private validation bundle, rather than published: `node scripts/build-media-fixture.mjs /tmp/sim-relay-media-...`
 builds an isolated quiet pulse app without installing it; `scripts/validate-mac-media.ts` requires
 `SIM_RELAY_VALIDATION_UDID` naming a dedicated `Sim Relay Media Validation ...` simulator and
 `SIM_RELAY_VALIDATION_DIR` under `/tmp/sim-relay-media-*`. `SIM_RELAY_VALIDATE_INTERACTION=1`
@@ -284,7 +284,7 @@ Dynamic Type and Reduce Motion; actual VoiceOver/large-text runtime checks remai
 
 ## Validation still required before closing issues
 
-Combined-stack automation: `npm test`, `npm run check`, `npm run build`, and real
+Combined-stack automation: private regression suites, `npm run check`, `npm run build`, and real
 headless Electron main/preload/renderer smoke. The latter verifies two pop-outs, retained recording
 across transfers, sender-window media/quality routing, late capture-state replay, and native dialog
 parenting with picker results stubbed. A delayed-window-loading case returns two pop-outs

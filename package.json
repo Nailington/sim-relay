@@ -15,15 +15,9 @@
     "web": "tsx src/web/cli.ts",
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.*",
-    "test:browser-renderer": "vite build && node --import tsx tests/browser-renderer-smoke.ts",
-    "test:browser": "vite build && node --import tsx tests/browser-renderer-smoke.ts && node --import tsx tests/browser-workspace-smoke.ts && node --import tsx tests/browser-workspace-smoke.ts identity",
-    "test:sessions": "node --import tsx --test tests/session-architecture.test.ts tests/display-coordinates.test.ts tests/session-host.test.ts",
-    "test:sessions:native": "npm run build && node --import tsx tests/native-session-smoke.ts",
     "package": "npm run build && electron-builder",
     "package:dir": "npm run build && electron-builder --dir",
-    "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs",
-    "benchmark:media": "tsx scripts/benchmark-media.ts"
+    "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.0",

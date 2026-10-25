@@ -57,7 +57,7 @@ Additive APIs:
 
 This branch includes `feature/client-authorization` (PR15, `2110def`) and is reviewed as PR18 against that branch. The desktop `pair` handler exchanges a single-use host code through `pairRemoteClient`; only the returned per-client credential is stored in `Profile.token` and used for HTTPS/WebSocket access. Certificate pinning, protocol-1/2 compatibility, sender-window routing, abortable preflights, and terminal revocation handling are retained together.
 
-The protocol fixtures pair with `pairRemoteClient`. The native smoke goes through the actual preload `relay.pair` API, which calls that same helper in Electron main, and verifies the code was consumed and cannot authorize protected endpoints. The inherited archive, HID, protocol, release, server and authorization regressions are included in `npm test`; Linux CI runs the full suite and the native fake-host smoke after building. Fake inventories explicitly report booted devices (or transition after boot) so shutdown-safe reconnect checks remain enforced.
+The protocol fixtures pair with `pairRemoteClient`. The native smoke goes through the actual preload `relay.pair` API, which calls that same helper in Electron main, and verifies the code was consumed and cannot authorize protected endpoints. The inherited archive, HID, protocol, release, server and authorization regressions and native fake-host smoke are retained in the private validation bundle; public CI only builds and validates packages. Fake inventories explicitly report booted devices (or transition after boot) so shutdown-safe reconnect checks remain enforced.
 
 ## Validation
 
@@ -67,11 +67,10 @@ Automated checks (Linux, fake simulators):
 
 ```sh
 npm run check
-npm test # complete tracked regression suite, including authorization
 npm run build
-npm run test:sessions:native # Linux headless Electron; uses a fake host and isolated userData
-node --import tsx --test tests/session-architecture.test.ts tests/display-coordinates.test.ts tests/session-host.test.ts
 ```
+
+Restore and run the private suites using [the private workflow](private-validation.md).
 
 The tests cover bounded retries, explicit cancel, stale connection suppression, release/no replay, terminal auth/certificate/protocol failures, active ownership and transfer, independent hosts/input/frames, exact rotated coordinates/aspect fitting, real pinned HTTPS/WebSocket connections to two fake simulators, conflict reporting, rotation-only metadata and refusal to start a shut-down simulator. A headless Electron 45 smoke test runs the real built main/preload/renderer against a fake host, opens two native BrowserWindows, transfers sessions without duplicate sockets, verifies independent input, duplicate focus, disconnected reservations and returning into an occupied workspace and reopening a previously closed workspace. Screenshot/install dialog methods are stubbed to assert the correct BrowserWindow parent; no operating-system picker is actually shown. This is Linux-only verification, not a real simulator or macOS/Windows window test. Browser inspection additionally checked normal/expanded screen bounds and toolbar menus at 360px.
 

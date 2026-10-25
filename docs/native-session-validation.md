@@ -1,3 +1,5 @@
+> Historical evidence below records commands available at the tested commit. Validation sources and runners now stay private under the owner-confirmed [policy](private-validation.md); these are not commands provided by a fresh public checkout.
+
 # Session validation evidence — 2026-10-23
 
 PR18 is stacked on authorization PR15. The integrated branch at `cce3685` passed `npm run check`, all **31** tests from `npm test`, and `npm run test:sessions:native` (production TypeScript/Vite/Electron/host build plus Linux headless Electron smoke). The latter exercises actual main/preload/renderer window routing with a fake Mac backend and single-use `/pair` exchange. Native picker methods are stubbed to assert their parent; real OS picker presentation is not verified.
