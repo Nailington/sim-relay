@@ -8,8 +8,12 @@ import Darwin
 // 48 kHz stereo signed little-endian PCM16; stderr carries bounded diagnostics.
 // SCK calls the output on a serial queue. There is no retained sample backlog.
 final class AudioOutput: NSObject, SCStreamOutput, SCStreamDelegate, Sendable {
+    private let transport: AudioTransport
+
+    init(transport: AudioTransport) { self.transport = transport }
+
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        FileHandle.standardError.write(Data("Audio capture stopped: \(error.localizedDescription)\n".utf8))
+        transport.failure("Audio capture stopped: \(error.localizedDescription)")
         exit(1)
     }
 
@@ -60,9 +64,7 @@ final class AudioOutput: NSObject, SCStreamOutput, SCStreamDelegate, Sendable {
             var size = UInt32(chunk.count).littleEndian
             var output = Data(bytes: &size, count: 4)
             output.append(chunk)
-            output.withUnsafeBytes { bytes in
-                if let pointer = bytes.baseAddress { _ = Darwin.write(STDOUT_FILENO, pointer, bytes.count) }
-            }
+            transport.packet(output)
         }
     }
 }
@@ -70,14 +72,25 @@ final class AudioOutput: NSObject, SCStreamOutput, SCStreamDelegate, Sendable {
 @main
 struct AudioCapture {
     static func main() async {
+        signal(SIGPIPE, SIG_IGN)
+        var transport: AudioTransport?
         do {
             if CommandLine.arguments.contains("--probe") {
                 print("screencapturekit-pcm16-48000-stereo-v1")
                 return
             }
-            try await capture()
+            if let option = CommandLine.arguments.firstIndex(of: "--ipc-config") {
+                guard option + 1 < CommandLine.arguments.count else {
+                    throw NSError(domain: "SimRelayAudio", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "Missing audio owner configuration."])
+                }
+                transport = try AudioTransport.connect(configurationPath: CommandLine.arguments[option + 1])
+            } else { transport = AudioTransport() }
+            try await capture(transport!)
         } catch {
-            FileHandle.standardError.write(Data("Cannot capture Mac audio. Allow Screen & System Audio Recording for Sim Relay (or its host Terminal) in System Settings, then restart the host. \(error.localizedDescription)\n".utf8))
+            let message = "Cannot capture Mac audio. Allow Screen & System Audio Recording for Sim Relay Audio in System Settings, then retry. \(error.localizedDescription)"
+            if let transport { transport.failure(message) }
+            else { FileHandle.standardError.write(Data((message + "\n").utf8)) }
             exit(1)
         }
     }
@@ -88,33 +101,42 @@ struct AudioCapture {
     #if compiler(>=6.2)
     @concurrent
     #endif
-    private nonisolated static func capture() async throws {
-        signal(SIGPIPE, SIG_IGN)
-        _ = fcntl(STDOUT_FILENO, F_SETFL, O_NONBLOCK)
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        guard let display = content.displays.first else {
-            throw NSError(domain: "SimRelayAudio", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "Log into the Mac desktop and attach a display before enabling audio."])
+    private nonisolated static func capture(_ transport: AudioTransport) async throws {
+        let owner = transport.isIPC ? AudioOwnerLifetime(descriptor: transport.descriptor) : nil
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            guard let display = content.displays.first else {
+                throw NSError(domain: "SimRelayAudio", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Log into the Mac desktop and attach a display before enabling audio."])
+            }
+            let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+            let configuration = SCStreamConfiguration()
+            configuration.width = 2
+            configuration.height = 2
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+            configuration.queueDepth = 3
+            configuration.capturesAudio = true
+            configuration.excludesCurrentProcessAudio = true
+            configuration.sampleRate = 48000
+            configuration.channelCount = 2
+            let output = AudioOutput(transport: transport)
+            let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
+            try stream.addStreamOutput(output, type: .audio,
+                                       sampleHandlerQueue: DispatchQueue(label: "dev.simrelay.audio.samples"))
+            try await stream.startCapture()
+            try transport.ready()
+            await owner?.markRunning()
+            // EOF is host ownership loss, including host crashes.
+            if let owner { await owner.wait() }
+            else {
+                let input = FileHandle.standardInput
+                for try await _ in input.bytes { }
+            }
+            try await stream.stopCapture()
+            await owner?.cancel()
+        } catch {
+            await owner?.cancel()
+            throw error
         }
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
-        let configuration = SCStreamConfiguration()
-        configuration.width = 2
-        configuration.height = 2
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-        configuration.queueDepth = 3
-        configuration.capturesAudio = true
-        configuration.excludesCurrentProcessAudio = true
-        configuration.sampleRate = 48000
-        configuration.channelCount = 2
-        let output = AudioOutput()
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
-        try stream.addStreamOutput(output, type: .audio,
-                                   sampleHandlerQueue: DispatchQueue(label: "dev.simrelay.audio.samples"))
-        try await stream.startCapture()
-        FileHandle.standardError.write(Data("SIM_RELAY_AUDIO_READY\n".utf8))
-        // EOF is host ownership loss, including SIGKILL/crashes. No detached tasks.
-        let input = FileHandle.standardInput
-        for try await _ in input.bytes { }
-        try await stream.stopCapture()
     }
 }
