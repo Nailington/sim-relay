@@ -1,6 +1,6 @@
 // Published packaging check: inspect the real application, not validation fixtures.
 import { listPackage } from '@electron/asar';
-import { access, readdir } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const privateAsset =
@@ -29,8 +29,17 @@ export async function checkPackagedApp(context) {
     }
   };
   await inspect(resources);
-  if (context.electronPlatformName === 'darwin')
+  if (context.electronPlatformName === 'darwin') {
     for (const file of ['bin/sim-relay-upgrade', 'bin/sim-relay-host', '../MacOS/Sim Relay'])
       await access(path.join(resources, file));
+    const audioApp = path.join(resources, 'host/Sim Relay Audio.app/Contents');
+    await access(path.join(audioApp, 'MacOS/sim-relay-audio'));
+    const info = await readFile(path.join(audioApp, 'Info.plist'), 'utf8');
+    if (
+      !/<key>CFBundleIdentifier<\/key>\s*<string>dev\.simrelay\.audio<\/string>/.test(info) ||
+      !/<key>LSUIElement<\/key>\s*<true\s*\/>/.test(info)
+    )
+      throw new Error('The packaged audio helper is missing its background app identity.');
+  }
   console.log('Packaged browser command, frontend and private asset exclusion: PASS');
 }

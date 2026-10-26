@@ -133,7 +133,10 @@ final class AudioTransport: Sendable {
         if isIPC {
             // Worst-case JSON escaping stays below the control-record bound.
             try? control(["type": "error", "message": String(message.prefix(600))])
-        } else { FileHandle.standardError.write(Data((message + "\n").utf8)) }
+        } else {
+            FileHandle.standardError.write(Data((message + "\n").utf8))
+            exit(1)
+        }
     }
 
     func packet(_ data: Data) {

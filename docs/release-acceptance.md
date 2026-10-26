@@ -57,8 +57,10 @@ its application commit. A public checkout cannot reproduce a missing private bun
   [Sanitized measurements](media-native-validation.json), [qualification](media.md).
 - **Failed — historical audio permission probe; blocked — audible audio acceptance.**
   ScreenCaptureKit denied permission. No PCM was retained. The owner then instructed
-  continuation without audio validation. Neither that denial nor subsequent research
-  authorizes another capture/TCC attempt. See [audio setup](media.md).
+  continuation without audio validation for that run. On October 26 the owner separately
+  authorized unattended app-owned audio validation after one-time permission approval.
+  That follow-up must record its own background-user and audible evidence; the historical
+  probe does not prove it. See [audio setup](media.md).
 - **Passed — limited historical stream measurements.** That media run received about
   29.79 FPS at 1206×2622 and 15 FPS at 604×1312. A production bandwidth-budget setting
   reduced resolution/FPS. This was not a shaped WAN test, measured video latency,
@@ -120,11 +122,14 @@ fallback only reports download started and retains the owning session until expl
 Discard/Cancel. Browser fixtures with injected sinks/MP4 bytes are not native download
 completion evidence. Related: #5, #16, #24, #26, #28, #30.
 
-### Packaged audio helper — blocked
+### Packaged audio helper — partially verified
 
-Only after separate explicit authorization and initial macOS consent, install the
-signed/notarized Mac candidate and verify helper identity, entitlements and permission
-attribution. Use an owned audible fixture, explicit host-wide consent and local opt-in.
+The owner authorized a follow-up and approved the app helper on October 26. Real tone
+capture, authenticated delivery, restart and owner-crash cleanup passed over SSH with
+the capture user logged in in the background. See [the native report](audio-headless-validation.md).
+This used an ad-hoc development candidate and synthetic video session, without replacing
+the installed app. The signed/notarized release still needs identity, entitlements and
+permission-persistence validation. Use an owned audible fixture, explicit host-wide consent and local opt-in.
 Measure audible playback, mute/volume, output-device changes, disconnect cleanup and
 flash/click A/V skew. Test denied permission separately without changing TCC policy.
 Do not claim per-simulator audio isolation or guaranteed lip-sync. SSH/MDM research is

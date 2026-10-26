@@ -104,6 +104,20 @@ struct AudioCapture {
     private nonisolated static func capture(_ transport: AudioTransport) async throws {
         let owner = transport.isIPC ? AudioOwnerLifetime(descriptor: transport.descriptor) : nil
         do {
+            if #available(macOS 14.2, *) {
+                let capture = try CoreAudioTapCapture.start(transport: transport)
+                do {
+                    try transport.ready()
+                    await owner?.markRunning()
+                    try await waitForOwner(owner)
+                    try capture.close()
+                } catch {
+                    try? capture.close()
+                    throw error
+                }
+                await owner?.cancel()
+                return
+            }
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             guard let display = content.displays.first else {
                 throw NSError(domain: "SimRelayAudio", code: 1,
@@ -127,16 +141,20 @@ struct AudioCapture {
             try transport.ready()
             await owner?.markRunning()
             // EOF is host ownership loss, including host crashes.
-            if let owner { await owner.wait() }
-            else {
-                let input = FileHandle.standardInput
-                for try await _ in input.bytes { }
-            }
+            try await waitForOwner(owner)
             try await stream.stopCapture()
             await owner?.cancel()
         } catch {
             await owner?.cancel()
             throw error
+        }
+    }
+
+    private nonisolated static func waitForOwner(_ owner: AudioOwnerLifetime?) async throws {
+        if let owner { await owner.wait() }
+        else {
+            let input = FileHandle.standardInput
+            for try await _ in input.bytes { }
         }
     }
 }

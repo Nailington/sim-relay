@@ -19,6 +19,7 @@ export async function buildNativeAudio() {
       `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macos13.0`,
       'native/AudioCapture.swift',
       'native/AudioIPC.swift',
+      'native/AudioTap.swift',
       '-o',
       'dist-host/sim-relay-audio',
       '-framework',
@@ -27,6 +28,8 @@ export async function buildNativeAudio() {
       'CoreMedia',
       '-framework',
       'AudioToolbox',
+      '-framework',
+      'CoreAudio',
       '-Xlinker',
       '-sectcreate',
       '-Xlinker',
@@ -55,6 +58,11 @@ export async function buildNativeAudio() {
   // Development builds have a valid app identity; the release signer replaces this
   // ad-hoc signature with the app's stable Developer ID identity when configured.
   await promisify(execFile)('/usr/bin/codesign', [
-    '--force', '--sign', '-', '--identifier', 'dev.simrelay.audio', bundle,
+    '--force',
+    '--sign',
+    '-',
+    '--identifier',
+    'dev.simrelay.audio',
+    bundle,
   ]);
 }

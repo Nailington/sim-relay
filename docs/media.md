@@ -3,8 +3,10 @@
 Media uses the existing authenticated, certificate-pinned HTTPS/WSS connection. No raw UDP,
 unauthenticated media port, microphone capture, or host-volume manipulation is introduced.
 The automated tests use injected capture backends. Real Apple Silicon simulator video, recording,
-Linux client download, and cleanup have also been verified as described below. **Audio capture
-remains blocked by macOS TCC and was not validated with a representative simulator app.**
+Linux client download, and cleanup have also been verified as described below. App-owned audio
+capture and authenticated delivery passed with the Mac user logged in in the background;
+[the native report](audio-headless-validation.md) records the evidence and limits. Representative
+simulator sound, client speaker playback and A/V sync still need validation.
 Keep #8, #12, and #13 open until their remaining acceptance checks are completed.
 
 ## Adaptive display (#8)
@@ -98,7 +100,8 @@ top-level `ftyp`, `mdat`, and `moov` atoms before offering a download. This dete
 truncated indexes, not arbitrary media corruption; native playback validation remains necessary.
 Finalization allows simctl up to 30 seconds to finish (35-second parent deadline; recording
 RPCs allow 65 seconds). Bounded stderr is retained throughout, so encoder/finalization errors
-remain actionable. Audio shutdown retains its separate eight-second bound. Finalization and
+remain actionable. Legacy audio shutdown allows eight seconds; the app-owned path allows ten
+seconds to prove process retirement and fails closed if it cannot. Finalization and
 transfer have separate progress/error states. Save uses the client's native
 save dialog and a pinned authenticated HTTPS stream to an adjacent `.partial-UUID` file;
 only a complete transfer atomically replaces the chosen destination. Cancellation/failure removes
@@ -128,47 +131,62 @@ must also preserve its ClientMedia owner.
 
 ## Mac audio (#13)
 
-The supported implementation path is a bundled Swift **ScreenCaptureKit** helper on macOS 13+,
-capturing the logged-in Mac desktop's system playback mix. This can carry simulator app sounds
-without modifying the simulator app, installing a virtual audio driver, or intercepting its APIs.
-**It includes all other Mac apps and simulators and is not isolated per UDID.** A host owner must
-opt in locally with `SIM_RELAY_ENABLE_HOST_AUDIO=1`, restart the host, and approve the macOS
-Screen & System Audio Recording permission for the responsible Sim Relay/helper/Terminal process.
-The client then checks the explicit all-app audio acknowledgement before Listen is enabled.
-Without the local environment opt-in, a paired client cannot start a host-wide capture. Revoke
-the OS permission or disable the environment setting and restart the host to remove the capability.
+The bundled **Sim Relay Audio.app** captures system playback using a private Core Audio
+process tap on macOS 14.2 and later. This backend does not enumerate displays or require
+Simulator.app to be frontmost. macOS 13 uses the older ScreenCaptureKit fallback and needs
+a shareable desktop display. Neither backend isolates audio by simulator UDID:
+**the shared mix can include other Mac apps and simulators**. No microphone or virtual
+audio driver is used. Protected media and macOS audio routing can produce silence.
 
-Example for the background service:
+Enable **Allow sharing all Mac playback audio** in the Mac's Host settings. For an existing
+background service, change its saved settings in the GUI or use `sim-relay-host configure
+JSON` while stopped, preserving the complete settings object printed by `settings` and
+setting `hostAudio` to `true`. Environment `SIM_RELAY_ENABLE_HOST_AUDIO=1` initializes this
+choice only on first service setup; setting it on a later `restart` does not replace saved
+settings. Restart after changing settings. Each authorized client also needs the host-audio
+grant and must acknowledge the all-app audio scope before Listen is enabled.
 
-```sh
-SIM_RELAY_ENABLE_HOST_AUDIO=1 sim-relay-host restart
-```
+Approve **Sim Relay Audio** once in that Mac user's **System Settings → Privacy & Security →
+Screen & System Audio Recording**. The packaged helper is at
+`/Applications/Sim Relay.app/Contents/Resources/host/Sim Relay Audio.app`. Initial approval
+can require that user to activate their desktop. A Terminal permission grant does not approve
+the app helper. Normal starts use LaunchServices (`open`) from the host's own login session,
+so an SSH shell does not need to be the responsible capture application. The intended setup
+keeps the host user logged in; another user may own the display. Actual background-user
+capture evidence is tracked separately from compilation and foreground launch checks.
+Logged-out operation is not supported or claimed.
 
-The service saves this opt-in across login/restarts. Set it to `0` and restart to disable it.
-Development uses `npm run build` on the Mac to compile the helper, or a precompiled executable
-can be selected with `SIM_RELAY_AUDIO_HELPER`. Runtime `--probe` detects missing/incompatible
-helpers without requesting permission. Actual capture detects permission denial, a missing
-desktop/display, and native stream failures with instructions to approve permission/retry.
-No microphone permission is requested. A logged-out/headless host without a shareable display
-cannot use this capture path. DRM/protected media and OS attribution/routing may produce silence.
+Permission belongs to the Mac user and signed app identity. A development build signed ad hoc
+can require approval again after rebuilding or moving it. Distributed updates need consistent
+Developer ID signing; an identifier string alone does not preserve a grant. No TCC database
+changes, permission resets, or automatic consent bypasses are used. Disable the saved local
+opt-in and restart, stop listening, or revoke the OS permission to stop sharing.
 
-Only one simulator session may own host-wide audio at a time, avoiding duplicate listeners and
-unintended cross-session sound. Other sessions can continue silent video and recordings.
-Per-process Core Audio taps are another supported native API (macOS 14.2+), but mapping all audio
-processes belonging to a simulator UDID is not a supported stable CoreSimulator contract. Tapping
-`Simulator.app` alone cannot promise isolation of app processes or CoreSimulator's audio services.
-That path is deliberately not presented as per-simulator capture.
+Only one simulator session may own host-wide audio at a time. Other sessions can continue
+silent video and recordings. Tapping Simulator.app alone cannot reliably identify every audio
+process belonging to a UDID, so this is not presented as per-simulator capture.
 
-The helper requests 48 kHz stereo float capture and emits interleaved PCM16. Pipe writes are
-below Darwin's 512-byte atomic-write limit and drop whole samples on backpressure. The host
-coalesces into 20 ms packets, sends `SRA1` + PCM over the same WSS, and drops audio when the
-socket backlog exceeds 64 KiB. The audio parser rejects invalid sizes and bounds pending bytes.
-PCM costs about 1.536 Mbps plus framing/TLS overhead; audio is opt-in because it can materially
-affect constrained links. There is no compressed-audio claim. The client allows one audio IPC
-packet in flight, and Web Audio schedules at most roughly 140 ms including the next packet,
-with at most eight sources; excess samples are dropped. Disconnect closes AudioContext, stops
-sources, closes the helper's stdin, and awaits process exit/escalation. The helper also observes
-stdin EOF if its parent crashes.
+The host creates a private mode-0700 directory, mode-0600 Unix socket and one-use configuration.
+The helper authenticates with a random nonce and its PID, waits for an explicit acknowledgement,
+and only then requests capture. Ready/error controls travel separately from bounded PCM records.
+After readiness, the host removes the configuration. Closing the ownership socket, including a
+host crash, stops the helper. Cleanup waits for the authenticated helper PID to disappear; an
+unproven shutdown fails closed and retains audio ownership until the host is restarted. The
+host never treats the `open` proxy's exit as proof that capture ended.
+
+Core Audio capture uses a private tap-only aggregate device, without changing the default
+output, volume or physical-device sample rate. Supported packed float32 stereo input is
+resampled to interleaved 48 kHz PCM16 with phase retained across callbacks. Format changes
+invalidate capture and require a restart. Native packets are at most 388 bytes including
+framing; a partial socket write retains only its bounded suffix and drops newer PCM until it
+drains. The legacy pipe path keeps writes below Darwin's atomic-write limit. Host delivery
+coalesces samples into 20 ms packets, sends `SRA1` + PCM over the authenticated WSS, and drops
+audio when its socket backlog exceeds 64 KiB. Parsing and client queues are bounded.
+
+PCM costs about 1.536 Mbps plus framing/TLS overhead. No compressed-audio claim is made. The
+client permits one audio IPC packet in flight; Web Audio schedules at most roughly 140 ms
+including the next packet, with at most eight sources. Excess samples are dropped. Disconnect
+closes AudioContext, stops sources, revokes the helper connection and awaits retirement.
 
 Audio and JPEG playback favor current content over backlog. They currently use arrival-based
 playback, not a common capture timestamp/media clock, so **lip-sync is not guaranteed**. Native
@@ -188,11 +206,14 @@ policies. Native audio playback remains unverified as documented below.
 
 `scripts/build-native.mjs` runs only on macOS, with Xcode's Swift 6 strict-concurrency compiler,
 deployment target 13.0 and the current native architecture. Both macOS CI architectures compile
-it during `npm run build`. `dist-host/sim-relay-audio` is copied with the existing `dist-host`
-extraResources into `Contents/Resources/host`, outside asar; the packaging sign walker includes
-embedded binaries. The helper embeds its own identifier/usage descriptions. Desktop macOS usage
-descriptions are additive. Signed/notarized builds, TCC attribution, and macOS 13 runtime execution
-still need actual Mac checks; Linux builds intentionally skip Swift compilation.
+it during `npm run build`. The build emits both the legacy `dist-host/sim-relay-audio`
+executable and `dist-host/Sim Relay Audio.app`, with identifier `dev.simrelay.audio`, usage
+descriptions and `LSUIElement` set so the helper has no Dock icon. The complete bundle is copied
+outside asar into `Contents/Resources/host`; the packaging check requires its identity and
+executable, and the release sign walker discovers the nested app. Runtime discovery prefers
+this app over the legacy executable. `SIM_RELAY_AUDIO_HELPER` may select either form explicitly.
+Signed/notarized update persistence and macOS 13 execution still require native release checks;
+Linux builds intentionally skip Swift compilation.
 The capture lifecycle runs in a private nonisolated async function (explicitly `@concurrent`
 with Swift 6.2+), separate from Swift's implicitly MainActor-isolated async entry point. This
 keeps older SDKs' non-Sendable `SCShareableContent` snapshots local to the capture function;
@@ -268,8 +289,11 @@ playback or accessibility-runtime success is claimed.
 
 The permission-only audio attempt returned: `The user declined TCCs for application, window,
 display capture`. No PCM was persisted; the helper was released. The user chose to continue
-without audio validation, so no further audio probes were performed. Hearing simulator audio,
-output-device changes, permission grant/revoke behavior, and measured A/V skew remain unresolved.
+without audio validation during that run. On October 26 the owner separately authorized
+unattended audio setup after one-time approval; that follow-up uses an app-owned transport and
+Core Audio taps. Historical denial is not evidence of current success. Hearing simulator audio,
+output-device changes, permission grant/revoke behavior, and measured A/V skew remain acceptance
+gates until the follow-up records them.
 
 Repeatable helpers are retained in the private validation bundle, rather than published: `node scripts/build-media-fixture.mjs /tmp/sim-relay-media-...`
 builds an isolated quiet pulse app without installing it; `scripts/validate-mac-media.ts` requires
