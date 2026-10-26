@@ -1,5 +1,6 @@
 import type { WebSocket } from 'ws';
 import { WebSocket as Socket } from 'ws';
+import path from 'node:path';
 import { z } from 'zod';
 import type { MediaCapabilities, MediaNotice, VideoSettings } from '../shared/media';
 import { AdaptiveVideo } from './adaptive';
@@ -7,6 +8,7 @@ import { AudioCoordinator, audioHelper, type AudioCapture } from './audio';
 import { RecordingStore, type Recording } from './recording';
 import { exec } from './simulator';
 import type { Capability } from './permissions';
+import { RetirementError } from './process';
 
 const action = z.object({
   type: z.literal('media-control'),
@@ -42,7 +44,11 @@ export class HostMedia {
     const helper = audioHelper();
     if (this.audio.enabled && helper) {
       try {
-        const result = await exec(helper, ['--probe'], { timeout: 5000, maxBuffer: 4096 });
+        const probe =
+          path.extname(path.normalize(helper)).toLowerCase() === '.app'
+            ? path.join(helper, 'Contents/MacOS/sim-relay-audio')
+            : helper;
+        const result = await exec(probe, ['--probe'], { timeout: 5000, maxBuffer: 4096 });
         this.capabilities.audio = result.stdout.trim() === 'screencapturekit-pcm16-48000-stereo-v1';
         this.capabilities.audioReason = this.capabilities.audio
           ? undefined
@@ -246,7 +252,7 @@ export class MediaPeer {
             },
             (error) => {
               this.send({ type: 'audio', active: false, message: error.message });
-              void this.stopAudio();
+              void this.stopAudio().catch(() => {});
             },
             this.audioAbort!.signal,
           );
@@ -264,6 +270,9 @@ export class MediaPeer {
         })();
         try {
           await this.pendingAudio;
+        } catch (error) {
+          if (error instanceof RetirementError) this.cleanupFailures.push(error);
+          throw error;
         } finally {
           this.pendingAudio = undefined;
         }

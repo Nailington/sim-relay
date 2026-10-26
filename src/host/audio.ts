@@ -2,20 +2,26 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { childCompletion, terminateChild } from './media-process';
+import { launchAppAudio, type AppAudio } from './audio-launch';
+import { RetirementError } from './process';
 
 export function audioHelper() {
   const directory = typeof __dirname === 'string' ? __dirname : path.resolve('src/host');
-  return [
-    process.env.SIM_RELAY_AUDIO_HELPER,
-    path.join(directory, 'sim-relay-audio'),
-    path.join(directory, '../dist-host/sim-relay-audio'),
-    path.join(directory, '../host/sim-relay-audio'),
+  const override = process.env.SIM_RELAY_AUDIO_HELPER;
+  if (override) return existsSync(override) ? override : undefined;
+  const directories = [
+    directory,
+    path.join(directory, '../dist-host'),
+    path.join(directory, '../host'),
     path.join(
       (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath ?? directory,
-      'host/sim-relay-audio',
+      'host',
     ),
-    path.resolve('dist-host/sim-relay-audio'),
-  ].find((file): file is string => !!file && existsSync(file));
+    path.resolve('dist-host'),
+  ];
+  return ['Sim Relay Audio.app', 'sim-relay-audio']
+    .flatMap((name) => directories.map((folder) => path.join(folder, name)))
+    .find((file) => existsSync(file));
 }
 export interface AudioCapture {
   close(): Promise<void>;
@@ -48,8 +54,21 @@ export const nativeAudio: AudioFactory = async (frame, onError, signal) => {
   signal.throwIfAborted();
   const helper = audioHelper();
   if (!helper) throw new Error('Rebuild/install the Mac host audio helper before enabling audio.');
-  const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
-  const done = childCompletion(child);
+  let capture: AppAudio;
+  if (path.extname(path.normalize(helper)).toLowerCase() === '.app')
+    capture = await launchAppAudio(helper, signal);
+  else {
+    const child = spawn(helper, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const completion = childCompletion(child);
+    capture = {
+      stdout: child.stdout,
+      stderr: child.stderr,
+      completion,
+      close: () => terminateChild(child, completion, () => child.stdin.end()),
+    };
+  }
+  const done = capture.completion;
+  void done.catch(() => {});
   let closed = false;
   let pendingPcm: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   const framer = new AudioFramer();
@@ -58,29 +77,31 @@ export const nativeAudio: AudioFactory = async (frame, onError, signal) => {
     (closing ??= (async () => {
       closed = true;
       signal.removeEventListener('abort', abort);
-      await terminateChild(child, done, () => child.stdin.end());
+      await capture.close();
     })());
   const abort = () => {
-    void close();
+    void close().catch(() => {});
   };
   signal.addEventListener('abort', abort, { once: true });
-  child.stdout.on('data', (chunk: Buffer) => {
+  if (signal.aborted) abort();
+  capture.stdout.on('data', (chunk: Buffer) => {
     if (closed) return;
     try {
       for (const pcm of framer.push(chunk)) {
         pendingPcm = Buffer.concat([pendingPcm, pcm]);
         while (pendingPcm.length >= 3840) {
+          if (closed || signal.aborted) return;
           frame(pendingPcm.subarray(0, 3840));
           pendingPcm = pendingPcm.subarray(3840);
         }
       }
     } catch (error) {
       onError(error as Error);
-      void close();
+      void close().catch(() => {});
     }
   });
   let diagnostics = '';
-  child.stderr.on('data', (chunk) => {
+  capture.stderr.on('data', (chunk) => {
     diagnostics = (diagnostics + chunk).slice(-3000);
   });
   void done.then(
@@ -113,10 +134,11 @@ export const nativeAudio: AudioFactory = async (frame, onError, signal) => {
       };
       const finish = (error?: Error) => {
         clearTimeout(timer);
-        child.stderr.off('data', ready);
+        capture.stderr.off('data', ready);
         error ? reject(error) : resolve();
       };
-      child.stderr.on('data', ready);
+      capture.stderr.on('data', ready);
+      ready();
       void done.then(
         () => finish(new Error(diagnostics || 'Audio capture stopped.')),
         () => finish(new Error(diagnostics || 'Audio capture failed.')),
@@ -165,7 +187,7 @@ export class AudioCoordinator {
           })()),
       };
     } catch (error) {
-      if (this.owner === owner) this.owner = undefined;
+      if (!(error instanceof RetirementError) && this.owner === owner) this.owner = undefined;
       throw error;
     }
   }
