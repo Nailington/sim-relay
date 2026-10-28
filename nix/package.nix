@@ -28,6 +28,9 @@ buildNpmPackage {
       ../index.html
       ../src
       ../scripts/build.mjs
+      ../scripts/build-web.mjs
+      ../scripts/build-native.mjs
+      ../native
       ../assets/app-icon.svg
       ../THIRD_PARTY_NOTICES.md
     ];
@@ -36,6 +39,9 @@ buildNpmPackage {
   nodejs = nodejs_24;
   npmDepsHash = "sha256-zWUz0lO3pne1boBFBlw5MyY9eJIIzPP906FSla+EKTg=";
   ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
+  # Nix's sandbox cannot use the separately installed Xcode SDK. Audio remains an
+  # optional runtime capability; a host owner may supply SIM_RELAY_AUDIO_HELPER.
+  SIM_RELAY_SKIP_NATIVE_AUDIO = "1";
 
   nativeBuildInputs = [
     makeWrapper
@@ -57,7 +63,7 @@ buildNpmPackage {
     npm prune --omit=dev --ignore-scripts
     appDir="$out/share/sim-relay"
     mkdir -p "$appDir/assets" "$appDir/src/host" "$out/bin"
-    cp -R dist dist-electron dist-host node_modules package.json THIRD_PARTY_NOTICES.md "$appDir/"
+    cp -R dist dist-electron dist-host dist-web node_modules package.json THIRD_PARTY_NOTICES.md "$appDir/"
     cp assets/app-icon.png "$appDir/assets/"
     cp src/host/idb.proto "$appDir/src/host/"
   ''
@@ -75,6 +81,8 @@ buildNpmPackage {
     chmod -R u+w "$out/Applications/Sim Relay.app"
     rm -f "$bundle/Resources/default_app.asar"
     ln -s "$appDir" "$bundle/Resources/app"
+    # Electron's packaged GUI and the CLI must use the same compiled host entry point.
+    ln -s "$appDir/dist-host" "$bundle/Resources/host"
     python3 - "$bundle/Info.plist" <<'PY'
     import plistlib
     import sys
@@ -96,6 +104,8 @@ buildNpmPackage {
     makeWrapper ${lib.getExe nodejs_24} "$out/bin/sim-relay-host" \
       --add-flags "$appDir/dist-host/host.cjs" \
       --prefix PATH : /usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin
+    makeWrapper ${lib.getExe nodejs_24} "$out/bin/sim-relay-web" \
+      --add-flags "$appDir/dist-web/web.cjs"
     runHook postInstall
   '';
 

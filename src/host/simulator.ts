@@ -1,16 +1,18 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn, type ChildProcess } from 'node:child_process';
+import { exec, RetirementError, retirementDeadline } from './process';
+export { exec } from './process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
-import type { Inventory, StreamMeta, InputEvent } from '../shared/types';
+import type { Inventory, StreamMeta, InputEvent, Orientation } from '../shared/types';
 import { hidEvents, JpegFramer, jpegDimensions } from './protocol';
 import { HidDispatcher } from './hid';
+import type { VideoSettings } from '../shared/media';
+import { displayRotation } from '../shared/display';
 
-export const exec = promisify(execFile);
 export const protoPath = () => {
   const directory = typeof __dirname === 'string' ? __dirname : path.resolve('src/host');
   return (
@@ -23,6 +25,11 @@ export const protoPath = () => {
 };
 // Dynamic gRPC methods are defined by the vendored, wire-compatible protocol.
 export interface CompanionClient extends grpc.Client {
+  getOrientation(
+    request: object,
+    options: grpc.CallOptions,
+    cb: (error: grpc.ServiceError | null, result: { orientation: string }) => void,
+  ): void;
   describe(
     request: object,
     options: grpc.CallOptions,
@@ -30,6 +37,7 @@ export interface CompanionClient extends grpc.Client {
       error: grpc.ServiceError | null,
       result: {
         targetDescription: {
+          displays?: { active: boolean; width: string; height: string }[];
           screenDimensions: {
             width: string;
             height: string;
@@ -57,9 +65,15 @@ export function companionExecutable() {
   );
 }
 export class MacSimulator {
-  async run(args: string[], binary = false, stdin?: string): Promise<string | Buffer> {
+  async run(
+    args: string[],
+    binary = false,
+    stdin?: string,
+    signal?: AbortSignal,
+  ): Promise<string | Buffer> {
     const command = exec('xcrun', ['simctl', ...args], {
       timeout: 120_000,
+      signal,
       maxBuffer: 32 * 1024 * 1024,
       encoding: binary ? 'buffer' : 'utf8',
       // simctl's pasteboard uses the process locale; SSH sessions may otherwise select Mac Roman.
@@ -69,8 +83,8 @@ export class MacSimulator {
     const result = await command;
     return result.stdout;
   }
-  async inventory(): Promise<Inventory> {
-    const list = JSON.parse(String(await this.run(['list', '--json'])));
+  async inventory(signal?: AbortSignal): Promise<Inventory> {
+    const list = JSON.parse(String(await this.run(['list', '--json'], false, undefined, signal)));
     const runtimes = list.runtimes.filter(
       (r: { identifier: string; isAvailable: boolean }) =>
         r.isAvailable && r.identifier.includes('.iOS-'),
@@ -115,8 +129,15 @@ export class SimulatorSession {
   private directory = '';
   private closed = false;
   private closing?: Promise<void>;
+  private orientationTimer?: ReturnType<typeof setInterval>;
+  private nativeOrientedFrames = false;
+  private requestedOrientation: Orientation = 'PORTRAIT';
   private activeTouch?: { x: number; y: number };
   private keys = new Set<number>();
+  private videoSettings: VideoSettings = { fps: 30, scale: 1, quality: 0.7 };
+  private frame?: (data: Buffer) => void;
+  private onVideoError?: (error: Error) => void;
+  private pointSize?: { short: number; long: number };
   static async open(
     udid: string,
     fps: number,
@@ -126,7 +147,8 @@ export class SimulatorSession {
   ) {
     const session = new SimulatorSession();
     const abort = () => {
-      void session.close();
+      // The startup path below still awaits and reports this cached cleanup promise.
+      void session.close().catch(() => {});
     };
     signal?.throwIfAborted();
     try {
@@ -173,6 +195,7 @@ export class SimulatorSession {
           }
         });
       });
+      signal?.throwIfAborted();
       const Client = companionDefinition().idb.CompanionService;
       session.client = new Client(
         `unix:${socket}`,
@@ -181,6 +204,7 @@ export class SimulatorSession {
       session.metadata = await new Promise<StreamMeta>((resolve, reject) =>
         session.client!.describe({}, { deadline: Date.now() + 15000 }, (error, data) => {
           if (error) return reject(error);
+          session.nativeOrientedFrames = !!data.targetDescription.displays?.length;
           const d = data.targetDescription.screenDimensions;
           const width = Number(d.width),
             height = Number(d.height);
@@ -189,96 +213,200 @@ export class SimulatorSession {
           resolve({
             width,
             height,
+            rotation: 0,
+            orientationSource: 'unavailable',
             widthPoints: Number(d.widthPoints) || width / (d.density || 1),
             heightPoints: Number(d.heightPoints) || height / (d.density || 1),
           });
         }),
       );
+      signal?.throwIfAborted();
+      let polling = false;
+      const pollOrientation = () => {
+        if (polling || session.closed) return;
+        polling = true;
+        session.client!.getOrientation({}, { deadline: Date.now() + 2000 }, (error, result) => {
+          polling = false;
+          if (session.closed) return;
+          if (error) {
+            if (error.code === grpc.status.UNIMPLEMENTED && session.orientationTimer)
+              clearInterval(session.orientationTimer);
+            return;
+          }
+          if (
+            ['PORTRAIT', 'PORTRAIT_UPSIDE_DOWN', 'LANDSCAPE_LEFT', 'LANDSCAPE_RIGHT'].includes(
+              result.orientation,
+            )
+          ) {
+            session.requestedOrientation = result.orientation as Orientation;
+            session.updateOrientation('host');
+          }
+        });
+      };
+      session.orientationTimer = setInterval(pollOrientation, 500);
+      pollOrientation();
       session.hid = new HidDispatcher(
         (done) => session.client!.hid(done),
         (error) => {
           if (!session.closed) onError(error);
         },
       );
-      session.video = session.client.videoStream();
-      const framer = new JpegFramer();
-      session.video.on('data', (response) => {
-        if (!response.payload?.data) return;
-        try {
-          for (const jpeg of framer.push(response.payload.data)) {
-            const dimensions = jpegDimensions(jpeg);
-            if (
-              dimensions &&
-              (session.metadata.width !== dimensions.width ||
-                session.metadata.height !== dimensions.height)
-            ) {
-              const density = session.metadata.width / session.metadata.widthPoints;
-              session.metadata = {
-                ...dimensions,
-                widthPoints: dimensions.width / density,
-                heightPoints: dimensions.height / density,
-              };
-            }
-            frame(jpeg);
-          }
-        } catch (e) {
-          onError(e as Error);
-        }
-      });
-      session.video.on('error', (error) => {
-        if (!session.closed) onError(error);
-      });
-      session.video.on('end', () => {
-        if (!session.closed)
-          onError(new Error('The simulator stopped streaming. Reconnect to resume.'));
-      });
+      session.frame = frame;
+      session.onVideoError = onError;
+      session.pointSize = {
+        short: Math.min(session.metadata.widthPoints, session.metadata.heightPoints),
+        long: Math.max(session.metadata.widthPoints, session.metadata.heightPoints),
+      };
       session.child.on('exit', () => {
         if (!session.closed)
           onError(new Error('The simulator input service stopped. Reconnect to resume.'));
       });
-      session.video.write({
-        start: { format: 'MJPEG', fps, compressionQuality: 0.7, scaleFactor: 1 },
-      });
+      session.setVideoSettings({ fps, scale: 1, quality: 0.7 });
       return session;
     } catch (e) {
-      await session.close();
+      try {
+        await session.close();
+      } catch (cleanupError) {
+        throw new RetirementError('Simulator startup cleanup failed. Restart the Mac host.', {
+          cause: new AggregateError([e, cleanupError]),
+        });
+      }
       throw e;
     } finally {
       signal?.removeEventListener('abort', abort);
     }
   }
+  /** Restart only the video RPC; HID and simulator ownership remain intact. */
+  setVideoSettings(settings: VideoSettings) {
+    if (this.closed || !this.client) return;
+    this.videoSettings = settings;
+    const old = this.video;
+    this.video = undefined;
+    old?.cancel();
+    const video = this.client.videoStream();
+    this.video = video;
+    const framer = new JpegFramer();
+    video.on('data', (response) => {
+      if (this.closed || this.video !== video || !response.payload?.data) return;
+      try {
+        for (const jpeg of framer.push(response.payload.data)) {
+          const dimensions = jpegDimensions(jpeg);
+          if (dimensions && this.pointSize) {
+            // Encoded pixels may be scaled. Input coordinates always use native points.
+            const landscape = dimensions.width > dimensions.height;
+            if (
+              dimensions.width !== this.metadata.width ||
+              dimensions.height !== this.metadata.height
+            )
+              this.release();
+            this.metadata = {
+              ...this.metadata,
+              ...dimensions,
+              widthPoints: landscape ? this.pointSize.long : this.pointSize.short,
+              heightPoints: landscape ? this.pointSize.short : this.pointSize.long,
+            };
+          }
+          this.updateOrientation(this.metadata.orientationSource);
+          this.frame?.(jpeg);
+        }
+      } catch (e) {
+        this.onVideoError?.(e as Error);
+      }
+    });
+    video.on('error', (error) => {
+      if (!this.closed && this.video === video) this.onVideoError?.(error);
+    });
+    video.on('end', () => {
+      if (!this.closed && this.video === video)
+        this.onVideoError?.(new Error('The simulator stopped streaming. Reconnect to resume.'));
+    });
+    video.write({
+      start: {
+        format: 'MJPEG',
+        fps: this.videoSettings.fps,
+        compressionQuality: this.videoSettings.quality,
+        scaleFactor: this.videoSettings.scale,
+      },
+    });
+  }
+  private updateOrientation(source = this.metadata.orientationSource) {
+    const orientation = this.requestedOrientation;
+    // Recent companions compose video in interface orientation. Legacy companions
+    // expose the portrait IOSurface; compensate only for that path.
+    const rotation = displayRotation(orientation, source, this.nativeOrientedFrames);
+    if (rotation !== this.metadata.rotation) this.release();
+    this.metadata = { ...this.metadata, orientation, rotation, orientationSource: source };
+  }
+  private release() {
+    if (this.hid?.cancelPending()) {
+      this.activeTouch = undefined;
+      this.keys.clear();
+    }
+    if (this.activeTouch) this.input({ type: 'touch', phase: 'up', point: this.activeTouch });
+    for (const code of this.keys) this.input({ type: 'key', code, phase: 'up' });
+  }
   input(event: InputEvent) {
     if (this.closed) return;
-    if (event.type === 'touch') this.activeTouch = event.phase === 'up' ? undefined : event.point;
+    if (event.type === 'release') {
+      this.release();
+      return;
+    }
+    if (event.type === 'rotate') {
+      this.release();
+    }
+    const orientation = event.type === 'rotate' ? event.orientation : undefined;
+    const activeTouch =
+      event.type === 'touch' ? (event.phase === 'up' ? undefined : event.point) : this.activeTouch;
+    const keys = event.type === 'key' ? new Set(this.keys) : this.keys;
     if (event.type === 'key')
-      event.phase === 'down' ? this.keys.add(event.code) : this.keys.delete(event.code);
-    this.hid?.send(hidEvents(event, this.metadata), !this.activeTouch && this.keys.size === 0);
+      event.phase === 'down' ? keys.add(event.code) : keys.delete(event.code);
+    // Capacity failure must preserve held state so a later release can still emit UP.
+    this.hid?.send(
+      hidEvents(event, this.metadata),
+      !activeTouch && keys.size === 0,
+      orientation
+        ? () => {
+            // A queued orientation command can be canceled before it reaches idb.
+            // Publish its presentation only once its RPC actually starts.
+            this.requestedOrientation = orientation;
+            this.updateOrientation('requested');
+          }
+        : undefined,
+    );
+    this.activeTouch = activeTouch;
+    this.keys = keys;
   }
   close(): Promise<void> {
     return (this.closing ??= this.finishClose());
   }
   private async finishClose() {
     if (this.closed) return;
-    if (this.activeTouch) this.input({ type: 'touch', phase: 'up', point: this.activeTouch });
-    for (const code of this.keys) this.input({ type: 'key', code, phase: 'up' });
+    this.release();
     this.closed = true;
+    if (this.orientationTimer) clearInterval(this.orientationTimer);
     this.video?.cancel();
     // Complete the final gesture and drain releases before stopping the owned process.
     await Promise.race([this.hid?.drain(), new Promise((resolve) => setTimeout(resolve, 1000))]);
     this.client?.close();
-    if (this.child?.pid && this.child.exitCode === null) {
+    if (this.child?.pid && this.child.exitCode === null && this.child.signalCode === null) {
       const child = this.child;
-      child.kill('SIGTERM');
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(() => {
-          if (child.exitCode === null) child.kill('SIGKILL');
-          resolve();
-        }, 1000);
-        child.once('exit', () => {
-          clearTimeout(timer);
-          resolve();
-        });
+      const exited = new Promise<void>((resolve) => {
+        child.once('exit', () => resolve());
       });
+      const timer = setTimeout(() => {
+        try {
+          if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        } catch {
+          // The retirement deadline still rejects if the owned process cannot be reaped.
+        }
+      }, 1000);
+      try {
+        child.kill('SIGTERM');
+        // Sending a signal does not establish retirement; an unreaped child fails closed.
+        await retirementDeadline(exited, 5000);
+      } finally {
+        clearTimeout(timer);
+      }
     }
     if (this.directory) await rm(this.directory, { recursive: true, force: true });
   }

@@ -1,23 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import {
-  ArrowRight,
-  ArrowUpRight,
-  Check,
-  Copy,
-  Monitor,
-  Plus,
-  ShieldCheck,
-  Terminal,
-} from 'lucide-react';
-import type {
-  DesktopApi,
-  HostEntry,
-  HostStatus,
-  Inventory,
-  Probe,
-  Simulator,
-} from '../shared/types';
+import { recordingActionCancelled } from '../shared/recording-protection';
+import { useState, type FormEvent } from 'react';
+import { ArrowRight, ArrowUpRight, Monitor, Plus, ShieldCheck, Terminal } from 'lucide-react';
+import type { DesktopApi, HostEntry, Inventory, Probe, Simulator } from '../shared/types';
 import { Busy, Modal } from './components';
+import { explainFailure, redactSecrets } from '../shared/diagnostics';
 import { parseCommand } from './input';
 
 export function PairModal({
@@ -53,7 +39,8 @@ export function PairModal({
       if (!probe) setProbe(await api.probe(url));
       else onPaired(await api.pair(probe, token));
     } catch (e) {
-      setError((e as Error).message);
+      const failure = explainFailure(e, probe ? 'authentication' : 'network');
+      setError(`${failure.title}. ${failure.next}`);
     } finally {
       setBusy(false);
     }
@@ -69,6 +56,12 @@ export function PairModal({
       onClose={onClose}
     >
       <form onSubmit={submit}>
+        {!api && (
+          <p className="info-box">
+            Connections require the desktop app. This browser preview cannot reach a real Mac.
+            Install Sim Relay, or run npm run dev from the project.
+          </p>
+        )}
         {!probe ? (
           <>
             <label className="field">
@@ -88,15 +81,15 @@ export function PairModal({
             <div className="info-box">
               <Monitor size={20} />
               <p>
-                On your Mac, start sharing in Sim Relay or run <code>npm run host</code>. Keep the
-                host running while you connect.
+                On your Mac, choose “Share this Mac” in Sim Relay or run <code>sim-relay-host</code>
+                . Keep the host running while you connect.
               </p>
             </div>
           </>
         ) : (
           <>
             <div className="fingerprint">
-              <span>HOST CERTIFICATE · SHA-256</span>
+              <span>Host certificate (SHA-256)</span>
               <code>{probe.fingerprint}</code>
             </div>
             <label className="checkbox">
@@ -108,7 +101,7 @@ export function PairModal({
               This fingerprint matches the one shown on my Mac.
             </label>
             <label className="field">
-              Pairing token
+              Pairing code
               <input
                 type="password"
                 value={token}
@@ -119,9 +112,20 @@ export function PairModal({
               />
             </label>
             <p className="field-hint">
-              The token grants control of this Mac’s simulators. Saved tokens use your operating
-              system’s secure storage; without it, pairing lasts for this session.
+              {probe.info.clientAuthorization
+                ? 'Each device pairs separately. After pairing, the Mac owner grants simulator and action permissions in Authorized clients. Refresh the code on the Mac after each use. Desktop credentials use secure storage when available; browser credentials remain in this browser’s saved setup.'
+                : 'This older host uses a shared pairing code. Saved pairing data uses your operating system’s secure storage; without it, pairing lasts for this session. Update the host for separate client authorization.'}
             </p>
+            {probe.info.clientAuthorization && (
+              <div className="info-box">
+                <p>
+                  Upgraded from 0.1.5? Old shared-code pairings no longer work with protocol 2. Pair
+                  each device again using the current code from Share this Mac or{' '}
+                  <code>sim-relay-host pairing</code>. Keep the host’s certificate and simulator
+                  data; verify the fingerprint above.
+                </p>
+              </div>
+            )}
             {(!probe.info.companion || !probe.info.xcode) && (
               <p className="inline-error">
                 The host needs {!probe.info.xcode ? 'Xcode' : 'idb_companion'} before it can stream
@@ -132,7 +136,7 @@ export function PairModal({
         )}
         {error && (
           <p className="inline-error" role="alert">
-            {error}
+            {redactSecrets(error)}
           </p>
         )}
         <div className="modal-actions">
@@ -154,17 +158,17 @@ export function PairModal({
           <button
             className="button primary"
             type="submit"
-            disabled={busy || (!!probe && !verified)}
+            disabled={busy || !api || (!!probe && !verified)}
           >
             {busy ? (
-              <Busy text="Connecting…" />
+              <Busy text={probe ? 'Pairing…' : 'Checking address…'} />
             ) : probe ? (
               <>
                 Pair Mac <ShieldCheck size={15} />
               </>
             ) : (
               <>
-                Find Mac <ArrowRight size={15} />
+                Check address <ArrowRight size={15} />
               </>
             )}
           </button>
@@ -176,14 +180,17 @@ export function PairModal({
 
 export function CreateModal({
   inventory,
+  hostName,
   onClose,
   onCreate,
 }: {
   inventory: Inventory;
+  hostName?: string;
   onClose(): void;
   onCreate(data: { name: string; deviceType: string; runtime: string }): Promise<void>;
 }) {
-  const [runtime, setRuntime] = useState(inventory.runtimes[0]?.identifier ?? '');
+  const runtimes = inventory.runtimes.filter((r) => r.isAvailable);
+  const [runtime, setRuntime] = useState(runtimes[0]?.identifier ?? '');
   const runtimeInfo = inventory.runtimes.find((r) => r.identifier === runtime);
   const types = inventory.devicetypes.filter(
     (d) =>
@@ -196,8 +203,8 @@ export function CreateModal({
     [error, setError] = useState('');
   return (
     <Modal
-      title="A fresh simulator."
-      subtitle="Create an iPhone or iPad on the selected Mac."
+      title="Create simulator"
+      subtitle={`Create an iPhone or iPad on ${hostName ?? 'the selected Mac'}.`}
       onClose={onClose}
     >
       <form
@@ -207,18 +214,23 @@ export function CreateModal({
           setError('');
           try {
             await onCreate({
-              name: name.trim() || types.find((d) => d.identifier === deviceType)!.name,
+              name:
+                name.trim() || types.find((d) => d.identifier === deviceType)?.name || 'Simulator',
               deviceType,
               runtime,
             });
           } catch (e) {
-            setError((e as Error).message);
+            if (recordingActionCancelled(e)) return;
+            const failure = explainFailure(e, 'action');
+            setError(
+              `${failure.title}. ${failure.next} Technical details: ${redactSecrets((e as Error).message)}`,
+            );
           } finally {
             setBusy(false);
           }
         }}
       >
-        {!inventory.runtimes.length ? (
+        {!runtimes.length ? (
           <div className="info-box">
             <p>
               No iOS runtimes are installed on this Mac. Open Xcode → Settings → Components on the
@@ -242,7 +254,7 @@ export function CreateModal({
                   setDeviceType(t?.identifier ?? '');
                 }}
               >
-                {inventory.runtimes.map((r) => (
+                {runtimes.map((r) => (
                   <option key={r.identifier} value={r.identifier}>
                     {r.name}
                   </option>
@@ -268,6 +280,12 @@ export function CreateModal({
                 maxLength={100}
               />
             </label>
+            {!types.length && (
+              <p className="inline-error">
+                No device types support this runtime. Choose another runtime, or install its
+                simulator components in Xcode on the Mac.
+              </p>
+            )}
             <p className="field-hint">
               Uses the selected Mac’s CPU and storage. The simulator stays on that Mac after you
               disconnect.
@@ -276,7 +294,7 @@ export function CreateModal({
         )}
         {error && (
           <p className="inline-error" role="alert">
-            {error}
+            {redactSecrets(error)}
           </p>
         )}
         <div className="modal-actions">
@@ -299,137 +317,7 @@ export function CreateModal({
   );
 }
 
-export function HostModal({ api, onClose }: { api?: DesktopApi; onClose(): void }) {
-  const [status, setStatus] = useState<HostStatus>({ running: false }),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(''),
-    [copied, setCopied] = useState(false);
-  useEffect(() => {
-    api
-      ?.hostStatus()
-      .then(setStatus)
-      .catch((e) => setError(e.message));
-  }, [api]);
-  const isMac = api?.platform === 'darwin';
-  return (
-    <Modal
-      title="Share this Mac."
-      subtitle="Make its iOS simulators available to your other computers."
-      onClose={onClose}
-    >
-      {isMac ? (
-        <>
-          {!status.running ? (
-            <>
-              <div className="info-box">
-                <ShieldCheck size={20} />
-                <p>
-                  Sharing lets paired clients manage simulators and run simulator commands as your
-                  user. Only share the pairing token with people you trust.
-                </p>
-              </div>
-              <p className="modal-note">
-                Requires Xcode, an installed iOS runtime, and idb_companion. The app must stay open
-                while sharing.
-              </p>
-            </>
-          ) : (
-            <>
-              <div className="sharing-status">
-                <span className="green-dot" />
-                Sharing is on
-              </div>
-              <label className="field">
-                Host address
-                <input readOnly value={status.addresses?.[0] ?? status.url} />
-              </label>
-              <label className="field">
-                Pairing token
-                <div className="copy-field">
-                  <input readOnly type="password" value={status.token} />
-                  <button
-                    aria-label="Copy pairing token"
-                    onClick={() => {
-                      void api!
-                        .copyText(status.token!)
-                        .then(() => setCopied(true))
-                        .catch(() => setError('Select the token field and copy it manually.'));
-                    }}
-                  >
-                    {copied ? <Check size={16} /> : <Copy size={16} />}
-                  </button>
-                </div>
-              </label>
-              <div className="fingerprint">
-                <span>VERIFY THIS FINGERPRINT ON YOUR CLIENT</span>
-                <code>{status.fingerprint}</code>
-              </div>
-              <p className="modal-note">
-                Xcode: {status.info?.xcode ? 'ready' : 'not found'} · Input service:{' '}
-                {status.info?.companion ? 'ready' : 'not found'}
-              </p>
-            </>
-          )}
-          {error && (
-            <p className="inline-error" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="modal-actions">
-            <button className="button secondary" onClick={onClose}>
-              Close
-            </button>
-            <button
-              disabled={busy}
-              className={`button ${status.running ? 'danger' : 'primary'}`}
-              onClick={async () => {
-                setBusy(true);
-                setError('');
-                try {
-                  if (status.running) {
-                    await api!.stopHost();
-                    setStatus({ running: false });
-                  } else setStatus(await api!.startHost());
-                } catch (e) {
-                  setError((e as Error).message);
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              {busy ? <Busy /> : status.running ? 'Stop sharing' : 'Start sharing'}
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="info-box">
-            <Monitor size={24} />
-            <p>
-              Hosting runs on macOS. Open Sim Relay on your Mac and choose “Set up a Mac host,” or
-              use the command line steps below.
-            </p>
-          </div>
-          <div className="code-block">
-            <code>
-              brew tap facebook/fb
-              <br />
-              brew install idb-companion
-              <br />
-              npm install
-              <br />
-              npm run host
-            </code>
-          </div>
-          <p className="modal-note">
-            Run these in this project on the Mac. Install Xcode and an iOS runtime first. Then
-            return here and connect using the Mac’s address and token.
-          </p>
-        </>
-      )}
-    </Modal>
-  );
-}
+export { HostManagement as HostModal } from './HostManagement';
 
 export function ActionModal({
   kind,
@@ -459,17 +347,17 @@ export function ActionModal({
     <Modal
       title={
         kind === 'command'
-          ? 'The command panel.'
+          ? 'Run simctl command'
           : kind === 'url'
-            ? 'Open a URL.'
+            ? 'Open URL'
             : kind === 'text'
-              ? 'Paste text into iOS.'
-              : 'Set a location.'
+              ? 'Paste text'
+              : 'Set location'
       }
       subtitle={
         kind === 'command'
-          ? 'Run simctl commands on the selected Mac.'
-          : `Send to ${selected?.name ?? 'your simulator'}.`
+          ? `Run on ${host?.name ?? 'the selected Mac'}${selected ? ` • $DEVICE is ${selected.name}` : ''}.`
+          : `${selected?.name ?? 'No simulator selected'} on ${host?.name ?? 'the selected Mac'}${demo ? ' (simulated preview)' : ''}.`
       }
       onClose={onClose}
     >
@@ -523,7 +411,11 @@ export function ActionModal({
               onClose();
             }
           } catch (e) {
-            setError((e as Error).message);
+            if (recordingActionCancelled(e)) return;
+            const failure = explainFailure(e, 'action');
+            setError(
+              `${failure.title}. ${failure.next} Technical details: ${redactSecrets((e as Error).message)}`,
+            );
           } finally {
             setBusy(false);
           }
@@ -640,14 +532,17 @@ export function ActionModal({
         )}
         {error && (
           <p className="inline-error" role="alert">
-            {error}
+            {redactSecrets(error)}
           </p>
         )}
         <div className="modal-actions">
           <button type="button" className="button secondary" onClick={onClose}>
             Close
           </button>
-          <button className="button primary" disabled={busy}>
+          <button
+            className="button primary"
+            disabled={busy || !host || (kind !== 'command' && !selected)}
+          >
             {busy ? (
               <Busy text="Sending…" />
             ) : kind === 'command' ? (

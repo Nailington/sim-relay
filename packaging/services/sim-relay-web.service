@@ -1,0 +1,17 @@
+[Unit]
+Description=Sim Relay browser workspaces
+After=network.target
+
+[Service]
+# Install the Linux tar release at /opt/sim-relay, or adjust this absolute path.
+ExecStart=/opt/sim-relay/resources/bin/sim-relay-web serve
+WorkingDirectory=/
+Environment=SIM_RELAY_WEB_CONFIG_FILE=%h/.config/sim-relay/web.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

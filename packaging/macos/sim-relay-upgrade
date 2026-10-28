@@ -1,0 +1,71 @@
+#!/bin/sh
+set -eu
+
+if [ "${1-}" = '--help' ]; then
+  echo 'Usage: sim-relay-upgrade'
+  echo 'Stop the owned background host, upgrade the Homebrew cask, then restore its previous running state.'
+  echo 'Run as the logged-in Mac user without sudo. Clients disconnect and active recordings stop.'
+  exit 0
+fi
+
+if [ "${1-}" != '--worker' ]; then
+  [ "$#" -eq 0 ] || { echo 'Usage: sim-relay-upgrade' >&2; exit 1; }
+  [ "$(uname -s)" = Darwin ] && [ "$(id -u)" -ne 0 ] || {
+    echo 'Run sim-relay-upgrade on the Mac as its logged-in user without sudo.' >&2
+    exit 1
+  }
+  launcher=$0
+  case "$launcher" in */*) ;; *) launcher=$(command -v "$launcher") ;; esac
+  while [ -L "$launcher" ]; do
+    directory=$(CDPATH= cd -P "$(dirname "$launcher")" && pwd)
+    target=$(readlink "$launcher")
+    case "$target" in /*) launcher=$target ;; *) launcher=$directory/$target ;; esac
+  done
+  directory=$(CDPATH= cd -P "$(dirname "$launcher")" && pwd)
+  host=$directory/sim-relay-host
+  [ -x "$host" ] || { echo 'The installed host command is missing. Reinstall Sim Relay.' >&2; exit 1; }
+  brew=$(command -v brew) || { echo 'Homebrew is missing. Install Homebrew or replace the app manually after stopping the host.' >&2; exit 1; }
+  umask 077
+  work=$(mktemp -d "${TMPDIR:-/tmp}/sim-relay-upgrade.XXXXXXXX")
+  cp "$launcher" "$work/upgrade"
+  # The worker survives replacement of the app that contains this launcher.
+  exec /bin/sh "$work/upgrade" --worker "$host" "$brew" "$work"
+fi
+
+[ "$#" -eq 4 ] || exit 1
+host=$2
+brew=$3
+work=$4
+lock="$HOME/Library/Application Support/Sim Relay/homebrew-upgrade.lock"
+umask 077
+mkdir -p "$(dirname "$lock")"
+if ! mkdir "$lock"; then
+  echo 'Another upgrade may be running. Wait for it to finish. If it was interrupted, verify Homebrew has stopped, remove ~/Library/Application Support/Sim Relay/homebrew-upgrade.lock, then use sim-relay-host upgrade resume.' >&2
+  rm -rf "$work"
+  exit 1
+fi
+prepared=0
+complete=0
+cleanup() {
+  result=$?
+  trap - EXIT HUP INT TERM
+  if [ "$prepared" -eq 1 ] && [ "$complete" -ne 1 ]; then
+    if [ -x "$host" ]; then "$host" upgrade abort || true; fi
+    echo 'Upgrade did not finish. The background host remains stopped. Verify or repair the installed app, then run sim-relay-host upgrade resume. Run sim-relay-host logs if it cannot start.' >&2
+    [ "$result" -ne 0 ] || result=1
+  fi
+  rmdir "$lock"
+  rm -rf "$work"
+  exit "$result"
+}
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+# prepare refuses unrelated foreground hosts and returns only after owned cleanup.
+"$host" upgrade prepare
+prepared=1
+"$brew" upgrade --cask nailington/sim-relay/sim-relay
+[ -x "$host" ] || { echo 'Homebrew returned, but the installed host command is missing. Reinstall the cask before resuming.' >&2; exit 1; }
+# Resolve the stable installed launcher again, never a Caskroom version path.
+"$host" upgrade resume
+complete=1
