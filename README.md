@@ -7,6 +7,10 @@ on macOS, Windows, and Linux. The Mac runs Xcode's actual iOS Simulator; clients
 framebuffer and send native input over an encrypted connection. No cloud account or physical
 iPhone is required.
 
+For devices without the desktop app, run an authenticated [self-hosted browser service](docs/browser-hosting.md)
+with the installed `sim-relay-web` command (macOS/Linux releases or Nix). Each browser keeps its own saved Macs and workspace;
+the hosting service relays pinned, authenticated connections to allowlisted Mac hosts.
+
 This is a working first version, **not yet complete parity with the native Mac Simulator**.
 See the current limits below.
 
@@ -44,8 +48,10 @@ npm run dev
 ```
 
 `npm run dev` opens an Electron window and starts its UI development server. `npm run dev:ui`
-opens only the browser preview, which uses clearly labeled, simulated demo data. Real
-connections run through Electron's isolated native bridge and are unavailable in the browser.
+opens only the UI preview, which uses clearly labeled, simulated demo data. Desktop connections
+use Electron's isolated native bridge. For real browser connections, build the app and run the
+[authenticated web service](docs/browser-hosting.md) with `sim-relay-web` (or `npm run web` in a built source checkout); the UI preview alone
+does not run that relay.
 
 ## Install with Nix
 
@@ -115,7 +121,7 @@ requires compatible macOS and Xcode versions; older Intel/Xcode combinations are
 The host searches `/opt/homebrew/bin`, `/usr/local/bin`, and `PATH`. Set `IDB_COMPANION_PATH` for
 a custom installation.
 
-In the desktop app on the Mac, select **Set up a Mac host → Start sharing**. Alternatively,
+In the desktop app on the Mac, select **Share this Mac → Start sharing**. Alternatively,
 start the bundled command from Terminal:
 
 ```sh
@@ -128,18 +134,25 @@ checkout is needed. See the [macOS guide](docs/macos.md) for details. Source dev
 still use `npm ci` followed by `npm run host`.
 
 To keep sharing after closing Terminal, use `sim-relay-host start`. It runs in the
-background and starts again at login. Use `sim-relay-host status` for pairing details,
+background. Enable login launch explicitly with `sim-relay-host login on`. Use
+`sim-relay-host status` for observed readiness and `sim-relay-host pairing` for the current code,
 `sim-relay-host logs` for recent output, and `sim-relay-host stop` to stop sharing and
 disable starting at login. See [background host setup](docs/macos.md#run-the-host-in-the-background).
 
-Keep the Mac awake and the host running. It shows its address, pairing token, SHA-256
+Keep the Mac available and the host running. It shows its address and SHA-256
 certificate fingerprint, and dependency readiness. Allow incoming connections through the
 Mac's firewall for LAN access. Default port: TCP **49300**. Discovery uses Bonjour/mDNS.
 On macOS, allow Local Network access when requested; see [Apple’s local network privacy guide](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy).
 
 On the client, choose a nearby Mac or **Connect a Mac**, enter its address, compare the
-fingerprint with the Mac, and enter its pairing token. Pick an existing simulator or create
-one with an installed runtime, then select **Start & connect**.
+fingerprint with the Mac, and enter its current single-use pairing code. The Mac owner then
+grants this client access in **Authorized clients**. Pick a permitted simulator or, with
+creation access, create one with an installed runtime, then select **Start & connect**.
+
+Use **Mac options → Manage addresses** to save LAN, Tailscale, hostname, or tunnel
+addresses under the same paired Mac. Each new address must prove the exact paired
+certificate. Choose a preferred address; the workspace shows the address currently
+in use and labels fallback connections. See [Mac addresses and fallback](docs/mac-addresses.md).
 
 ## Local and direct connections
 
@@ -162,6 +175,14 @@ ssh -N -L 49300:127.0.0.1:49300 user@your-mac
 Connect to `https://127.0.0.1:49300` using the same Mac fingerprint and token. Loopback-only
 hosts are not advertised through Bonjour.
 
+## Workspace and diagnostics
+
+Choose a Mac and simulator in the left rail, then select **Start & connect**. The display
+uses the remaining window height; hide its controls or expand the display from the toolbar.
+**Diagnostics** checks connection stages and host setup, including when the Mac is unreachable.
+Review the redacted report before saving it locally. See the [workspace and diagnostics guide](docs/workspace-and-diagnostics.md)
+for the cleanup inventory, report contents, and validation limits.
+
 ## Controls
 
 - Click, double-click, drag, and click-and-hold send native touch input. Coordinates map to
@@ -173,29 +194,40 @@ hosts are not advertised through Bonjour.
 - The inspector provides Home, Lock, rotation, shake, volume, PNG screenshots, appearance,
   deep links, location, and **Paste text**. Paste text uses the simulator clipboard and
   Command+V, including Unicode; focus an iOS text field first.
+- **Media controls** provide adaptive stream quality with manual limits and measured video
+  statistics, silent host-side H.264 screen recordings saved as MP4 on the client, and optional
+  Mac playback audio with client mute/volume. Audio includes every app on the Mac and requires
+  local host opt-in plus macOS permission. See [media setup, lifecycle, codec assessment, and
+  validation limits](docs/media.md). Native recording and Linux client transfer were verified on a Mac;
+  audio remains unvalidated because macOS permission was denied.
 - **Install app** transfers a ZIP containing one simulator `.app` from any client OS.
   Build for the simulator, not a physical device. On a Mac, create an archive with
   `ditto -c -k --keepParent MyApp.app MyApp.app.zip`. Limits: 128 MB compressed, 512 MB expanded,
-  20,000 files. Archive symlinks become regular files. Install bundles that require symlinks
-  directly from the Mac filesystem using the command panel.
-- **Command panel** (Ctrl+K / Cmd+K) runs `simctl` arguments directly, without a shell.
-  `$DEVICE` means the selected simulator. Launch/uninstall apps, send notifications, change
-  permissions, import media, or use other finite `simctl` operations. Paths refer to the Mac.
-  Erase/delete commands require a checkbox. Commands time out after two minutes.
+  20,000 files. Archive symlinks become regular files; bundles requiring preserved symlinks
+  need installation locally on the Mac outside Sim Relay.
+- **Command** (Ctrl+K / Cmd+K) runs a restricted set of `simctl` arguments without a shell,
+  when the Mac owner grants raw-command access. `$DEVICE` means the selected simulator.
+  Supported commands include launching apps, appearance, location and non-file deep links.
+  Host paths, arbitrary subcommands and global device aliases are rejected. Erase/delete
+  also require destructive permission and confirmation. See the exact
+  [command and permission rules](docs/client-permissions.md#raw-commands-and-host-paths).
 - `/` focuses simulator search when outside text fields and the simulator display.
 
-Each simulator permits one controlling client at a time. Separate simulators can have separate
+Each simulator permits one viewer or controller display at a time. Separate simulators can have separate
 clients. Disconnecting leaves the simulator running; **Shut down simulator** powers it off.
 
 ## Current limits
 
+The [release acceptance ledger](docs/release-acceptance.md) separates measured results
+from outstanding native, browser, platform and upgrade checks for the pending release.
+
 - Arbitrary simultaneous multi-finger paths, two-finger twist/rotation gestures, pressure,
   and stylus input are not implemented. The public idb streaming protocol used here exposes
   single-contact input and a predefined pinch. Device orientation rotation is supported.
-- Streaming uses full-resolution MJPEG over TLS, requested 15/30/60 fps, frame dropping under
-  backpressure, and actual decoded-frame measurements. H.264/WebRTC, adaptive bitrate, audio,
-  recording controls, and guaranteed 60 fps are not implemented. MJPEG uses more bandwidth
-  than an inter-frame video codec.
+- Live streaming uses adaptive MJPEG over TLS with bounded frame dropping. Live H.264/WebRTC
+  and guaranteed 60 fps are not implemented. Recording uses H.264 separately. Mac audio is
+  host-wide PCM, not isolated per simulator; precise A/V lip-sync is not guaranteed. Nix builds
+  need a separately compiled audio helper. See the [media guide](docs/media.md) for details.
 - Simulator-specific GUI menus, full Mac desktop control, Xcode editing/building/debugging,
   physical-device features, and long-running console sessions are outside this version.
 - Intel hosts, Windows desktop behavior, signing, and notarization need platform validation.
@@ -205,25 +237,42 @@ clients. Disconnecting leaves the simulator running; **Shut down simulator** pow
 
 ## Security and storage
 
-The host uses TLS, a persistent certificate, and a random 192-bit bearer token. Pairing verifies
-the fingerprint before sending the token. Subsequent HTTPS/WebSocket traffic validates the
+The host uses TLS, a persistent certificate, and a random single-use pairing code. Pairing verifies
+the fingerprint before exchanging the code for a separate random 256-bit client credential.
+The code changes after every successful pairing. The host stores only credential hashes;
+the desktop client protects its credential with the OS credential store when available.
+Subsequent HTTPS/WebSocket traffic validates the
 pinned certificate. The companion uses a private Unix socket, not an exposed gRPC port.
 Browser origins are rejected. The renderer has no Node integration or unrestricted IPC.
+
+Manage access locally on the Mac with `sim-relay-host clients`,
+`sim-relay-host revoke CLIENT_ID`, and `sim-relay-host pairing` (or `npm run host -- clients`
+when running from source). Revoking a client closes its active displays and prevents reuse of
+its credential; other clients stay connected. Use the same `SIM_RELAY_STATE_DIR` as the host.
+The desktop **Host management** panel manages the same saved background service and state
+directory as the CLI. Use it to grant device/action access, rotate the pairing code, or revoke
+a client. See [host management](docs/host-management.md) and
+[client permissions](docs/client-permissions.md) for configuration, migration and access rules.
 
 HTTPS works with local and Tailscale IP addresses: each Mac generates its own self-signed
 certificate, so it does not need a public domain or a certificate authority. A browser may
 warn about that certificate; Sim Relay pairs by comparing its fingerprint on both devices.
 Connection compatibility uses an API protocol version independently of the app release
-number. Updated clients also recognize hosts from releases `0.1.0` through `0.1.3`, which
-advertised only an app version.
+number. New hosts use protocol 2 for individual client authorization. Updated clients can
+also connect to protocol 1 hosts, including releases `0.1.0` through `0.1.5`, which advertised
+only an app version. Upgrading a host invalidates existing shared-token pairings; update
+clients and pair them again. Protocol 1 hosts retain their original shared-token behavior.
 
-Pairing grants simulator management access as the Mac user, including simulator commands.
-Give the token only to trusted clients. Saved client tokens use operating-system encryption.
+New pairings start as viewers with no devices or optional actions. The Mac owner must grant
+access locally. Existing version 1 client records migrate with their previous broad access
+made explicit; review those grants after upgrading. Give pairing codes only to intended clients.
+Saved client credentials use operating-system encryption.
 Without secure storage, pairing stays in memory for that session; plaintext persistence is disabled.
 
-CLI host state lives in `~/.sim-relay`; desktop host state lives under Electron's user-data
-directory. To revoke paired clients, stop sharing and remove the host's `token` file; starting
-again generates a new token. Replacing the host certificate requires pairing again.
+The GUI and CLI select the same saved host configuration and state directory. Migration from
+older foreground/desktop hosts is described in the host-management guide. Revoke access using
+the local client controls; deleting or rotating the pairing-code file does not revoke issued
+client credentials. Replacing the host certificate requires fingerprint verification and pairing again.
 
 Host variables: `SIM_RELAY_PORT`, `SIM_RELAY_BIND`, `SIM_RELAY_STATE_DIR`, `IDB_COMPANION_PATH`.
 Clients do not need Xcode or idb.
@@ -257,3 +306,5 @@ published source and Nix package inputs.
 - `scripts`: development builds, package validation, and release automation.
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for protocol licensing.
+
+For independent display windows, automatic recovery, gesture capabilities, and platform validation notes, see [Display sessions](docs/display-sessions.md).

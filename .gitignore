@@ -2,15 +2,21 @@ node_modules/
 dist/
 dist-electron/
 dist-host/
+dist-web/
 release/
 .env
 .signing/
 *.log
 .DS_Store
 coverage/
+# Private validation sources and fixtures are never published (issue #31).
 /tests/
-*.test.*
-*.spec.*
+/.private-validation/
+/scripts/benchmark-media.ts
+/scripts/build-media-fixture.mjs
+/scripts/fixtures/
+/scripts/validate-mac-media.ts
+/scripts/validate-media-download.ts
 /scripts/desktop-smoke.cjs
 /scripts/ci-smoke.mjs
 /scripts/mac-e2e.ts

@@ -1,0 +1,540 @@
+{
+  "platform": "darwin/arm64",
+  "udid": "61283ED7-4F73-4CD5-89EE-7AE9AAAE14C0",
+  "port": 49319,
+  "source": "Dedicated simulator SpringBoard with controlled swipes/status-bar changes; pulse-app launch unconfirmed",
+  "full-resolution": {
+    "frames": 149,
+    "seconds": 5.000961041999999,
+    "receivedFps": 29.794273290401694,
+    "payloadKbps": 32622.126553250608,
+    "dimensions": {
+      "width": 1206,
+      "height": 2622
+    },
+    "metadata": {
+      "width": 1206,
+      "height": 2622,
+      "widthPoints": 402,
+      "heightPoints": 874
+    }
+  },
+  "half-resolution": {
+    "frames": 75,
+    "seconds": 5.001262333000001,
+    "receivedFps": 14.99621395684944,
+    "payloadKbps": 3875.975045758512,
+    "dimensions": {
+      "width": 604,
+      "height": 1312
+    },
+    "metadata": {
+      "width": 604,
+      "height": 1312,
+      "widthPoints": 402,
+      "heightPoints": 874
+    }
+  },
+  "recording": {
+    "downloadedBytes": 351107,
+    "ffprobe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 1206,
+          "height": 2622,
+          "nb_frames": "92"
+        }
+      ],
+      "format": {
+        "duration": "10.038333",
+        "size": "351107"
+      }
+    },
+    "decodedWithoutErrors": true
+  },
+  "remoteClientTransfer": {
+    "client": "linux/x64",
+    "bytes": 351107,
+    "sha256": "f44cf4f601cba9db894fa6b4c6065ad808b72e28d74414543ed33c55c9920ea7",
+    "pinnedTlsDownload": true,
+    "decodedWithoutErrors": true,
+    "ffprobe": {
+      "programs": [],
+      "stream_groups": [],
+      "streams": [
+        {
+          "codec_name": "h264",
+          "width": 1206,
+          "height": 2622,
+          "nb_frames": "92"
+        }
+      ],
+      "format": {
+        "duration": "10.038333",
+        "size": "351107"
+      }
+    }
+  },
+  "constrained-budget": {
+    "frames": 44,
+    "seconds": 14.002133042,
+    "receivedFps": 3.142378369639833,
+    "payloadKbps": 651.3030530880739,
+    "dimensions": {
+      "width": 482,
+      "height": 1048
+    },
+    "metadata": {
+      "width": 482,
+      "height": 1048,
+      "widthPoints": 402,
+      "heightPoints": 874
+    }
+  },
+  "audio": {
+    "status": "skipped",
+    "reason": "Audio requires separate explicit validation opt-in; permission approval may still be pending."
+  },
+  "disconnectCleanup": {
+    "recordingDirectoriesRemaining": 0
+  },
+  "metrics": [
+    {
+      "phase": "full-resolution",
+      "metrics": {
+        "kbps": 20747.99374236498,
+        "sentFps": 18.97539247384751,
+        "dropped": 16,
+        "settings": {
+          "fps": 30,
+          "scale": 1,
+          "quality": 0.7
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "full-resolution",
+      "metrics": {
+        "kbps": 32758.834399221712,
+        "sentFps": 29.97776149227003,
+        "dropped": 0,
+        "roundTripMs": 1.413749999999709,
+        "settings": {
+          "fps": 30,
+          "scale": 1,
+          "quality": 0.7
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "full-resolution",
+      "metrics": {
+        "kbps": 32306.659132981003,
+        "sentFps": 29.468781509588286,
+        "dropped": 1,
+        "roundTripMs": 0.8814579999998386,
+        "settings": {
+          "fps": 30,
+          "scale": 1,
+          "quality": 0.7
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 7345.199404750311,
+        "sentFps": 16.98997839328481,
+        "dropped": 1,
+        "roundTripMs": 1.5569169999998849,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3878.93160916104,
+        "sentFps": 14.98866888108795,
+        "dropped": 0,
+        "roundTripMs": 0.2022079999987909,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3878.4026884934315,
+        "sentFps": 14.986625066566338,
+        "dropped": 0,
+        "roundTripMs": 0.19383299999935844,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3877.6653763827508,
+        "sentFps": 14.983776001874682,
+        "dropped": 0,
+        "roundTripMs": 2.4063329999989946,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3872.811384717263,
+        "sentFps": 14.965019580994838,
+        "dropped": 0,
+        "roundTripMs": 2.2301669999978913,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3872.055436944962,
+        "sentFps": 14.962098505814328,
+        "dropped": 0,
+        "roundTripMs": 0.86370800000077,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3879.406799250977,
+        "sentFps": 14.990505074048102,
+        "dropped": 0,
+        "roundTripMs": 1.0904579999987618,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3875.9946143015186,
+        "sentFps": 14.977319971674119,
+        "dropped": 0,
+        "roundTripMs": 0.829583000002458,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3873.0235023948326,
+        "sentFps": 14.965839229793339,
+        "dropped": 0,
+        "roundTripMs": 0.8558329999978014,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3877.8851289254853,
+        "sentFps": 14.984625152731336,
+        "dropped": 0,
+        "roundTripMs": 1.949584000001778,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3876.5465895000116,
+        "sentFps": 14.979452871738983,
+        "dropped": 0,
+        "roundTripMs": 2.3654999999998836,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3875.9825201701865,
+        "sentFps": 14.977273238462963,
+        "dropped": 0,
+        "roundTripMs": 1.4994170000027225,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3875.217275768817,
+        "sentFps": 14.974316239964168,
+        "dropped": 0,
+        "roundTripMs": 1.0907919999990554,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3872.3794140164705,
+        "sentFps": 14.963350393070716,
+        "dropped": 0,
+        "roundTripMs": 0.9813750000030268,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3873.7455164851694,
+        "sentFps": 14.968629181052593,
+        "dropped": 0,
+        "roundTripMs": 1.0264999999999418,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "half-resolution",
+      "metrics": {
+        "kbps": 3873.842322361662,
+        "sentFps": 14.969003250867347,
+        "dropped": 0,
+        "roundTripMs": 0.5904159999990952,
+        "settings": {
+          "fps": 15,
+          "scale": 0.5,
+          "quality": 0.5
+        },
+        "mode": "manual"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 1547.1591772207273,
+        "sentFps": 5.9911059515884055,
+        "dropped": 38,
+        "roundTripMs": 0.843209000006027,
+        "settings": {
+          "fps": 24,
+          "scale": 0.85,
+          "quality": 0.7
+        },
+        "mode": "auto"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 0,
+        "sentFps": 0,
+        "dropped": 49,
+        "roundTripMs": 6.54529100000218,
+        "settings": {
+          "fps": 18,
+          "scale": 0.7,
+          "quality": 0.6
+        },
+        "mode": "auto"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 0,
+        "sentFps": 0,
+        "dropped": 37,
+        "roundTripMs": 5.764125000001513,
+        "settings": {
+          "fps": 12,
+          "scale": 0.55,
+          "quality": 0.5
+        },
+        "mode": "auto"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 1180.8161705906025,
+        "sentFps": 3.9940204521305973,
+        "dropped": 17,
+        "roundTripMs": 8.581790999996883,
+        "settings": {
+          "fps": 8,
+          "scale": 0.4,
+          "quality": 0.4
+        },
+        "mode": "auto"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 936.8034202204341,
+        "sentFps": 4.992982881829798,
+        "dropped": 7,
+        "roundTripMs": 3.5589169999948354,
+        "settings": {
+          "fps": 8,
+          "scale": 0.4,
+          "quality": 0.4
+        },
+        "mode": "auto"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 1030.260209636077,
+        "sentFps": 5.491089677419077,
+        "dropped": 5,
+        "roundTripMs": 1.162333000000217,
+        "settings": {
+          "fps": 8,
+          "scale": 0.4,
+          "quality": 0.4
+        },
+        "mode": "auto"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 1031.1257457658107,
+        "sentFps": 5.495702819286503,
+        "dropped": 5,
+        "roundTripMs": 0.6940839999952004,
+        "settings": {
+          "fps": 8,
+          "scale": 0.4,
+          "quality": 0.4
+        },
+        "mode": "auto"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 936.6771270982453,
+        "sentFps": 4.9923097636669365,
+        "dropped": 6,
+        "roundTripMs": 0.7356670000008307,
+        "settings": {
+          "fps": 8,
+          "scale": 0.4,
+          "quality": 0.4
+        },
+        "mode": "auto"
+      }
+    },
+    {
+      "phase": "constrained-budget",
+      "metrics": {
+        "kbps": 1030.3411105661287,
+        "sentFps": 5.491520863888034,
+        "dropped": 5,
+        "roundTripMs": 0.2790829999939888,
+        "settings": {
+          "fps": 8,
+          "scale": 0.4,
+          "quality": 0.4
+        },
+        "mode": "auto"
+      }
+    }
+  ],
+  "errors": [],
+  "environment": {
+    "macOS": "15.7.1",
+    "xcode": "26.0.1",
+    "node": "24.16.0",
+    "simulatorRuntime": "iOS26.0.1",
+    "helperArchitecturesCompiled": ["arm64", "x86_64"],
+    "helperRuntimeTested": "arm64 permission denial only"
+  },
+  "audioPermissionEvidence": {
+    "status": "denied",
+    "message": "The user declined TCCs for application, window, display capture",
+    "pcmPersisted": false,
+    "userDecision": "Continue without audio validation; no further probes"
+  }
+}

@@ -12,6 +12,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:ui": "vite --host 0.0.0.0",
     "host": "tsx src/host/cli.ts",
+    "web": "tsx src/web/cli.ts",
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "check": "tsc --noEmit",
     "package": "npm run build && electron-builder",
@@ -71,7 +72,9 @@
         "NSLocalNetworkUsageDescription": "Sim Relay finds Macs on your network and connects to their iOS simulators.",
         "NSBonjourServices": [
           "_simrelay._tcp"
-        ]
+        ],
+        "NSAudioCaptureUsageDescription": "Share Mac playback audio with a paired Sim Relay client. Audio includes every app on this Mac.",
+        "NSScreenCaptureUsageDescription": "Capture Mac playback audio for Sim Relay. Desktop video is not sent."
       },
       "artifactName": "Sim-Relay-${version}-mac-${arch}.${ext}",
       "minimumSystemVersion": "13.0",
@@ -85,8 +88,25 @@
         {
           "from": "packaging/macos/sim-relay-host",
           "to": "bin/sim-relay-host"
+        },
+        {
+          "from": "dist-web",
+          "to": "web"
+        },
+        {
+          "from": "packaging/macos/sim-relay-web",
+          "to": "bin/sim-relay-web"
+        },
+        {
+          "from": "packaging/macos/sim-relay-upgrade",
+          "to": "bin/sim-relay-upgrade"
+        },
+        {
+          "from": "packaging/services",
+          "to": "services"
         }
-      ]
+      ],
+      "executableName": "Sim Relay"
     },
     "win": {
       "target": [
@@ -104,7 +124,21 @@
       "category": "Development",
       "maintainer": "Nailington <Nailington@users.noreply.github.com>",
       "syncDesktopName": true,
-      "artifactName": "Sim-Relay-${version}-linux-${arch}.${ext}"
+      "artifactName": "Sim-Relay-${version}-linux-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "dist-web",
+          "to": "web"
+        },
+        {
+          "from": "packaging/linux/sim-relay-web",
+          "to": "bin/sim-relay-web"
+        },
+        {
+          "from": "packaging/services",
+          "to": "services"
+        }
+      ]
     },
     "icon": "assets/app-icon.png",
     "deb": {
@@ -112,7 +146,8 @@
     },
     "rpm": {
       "packageName": "sim-relay"
-    }
+    },
+    "executableName": "sim-relay"
   },
   "overrides": {
     "global-agent": "^4.1.3"

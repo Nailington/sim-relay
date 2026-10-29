@@ -4,8 +4,12 @@
 push, pull request, and manual run. Its reusable `desktop.yml`
 builds natively on six runners: macOS arm64/x64, Windows arm64/x64, and Linux arm64/x64.
 CI uploads downloadable artifacts for seven days. It also evaluates every flake output and
-builds the x86_64 Linux Nix package. Test suites and test runners stay local and are excluded
-from the published repository and Nix source inputs.
+builds the x86_64 Linux Nix package. Test suites, fixture apps, benchmark runners and test runners stay private and are excluded
+from the published repository, public CI artifacts, installers and Nix source inputs. The owner
+reconfirmed this policy on 2026-10-25 in issue #31. The earlier implementation stack
+accidentally tracked validation sources; that publication was not authorization to change
+the policy. Removing current files does not erase copies in existing Git history.
+See [the private validation workflow](private-validation.md) for regression evidence and release gates.
 
 `.github/workflows/release.yml` runs when a `v*` tag is pushed. It validates the version,
 runs the same complete CI, checks the presence of all fourteen installers, computes SHA-256
@@ -62,8 +66,13 @@ after fixing permissions or a non-fast-forward push.
    it to `lib.fakeHash`, build the flake, and copy the reported actual hash. Stage new source
    files before building a local Git flake. The Nix package version reads `package.json`
    automatically, so there is no separate flake version to edit.
-3. Run `npm run check`, `npm run build`, and `nix build`. Commit the version, lockfile, Nix hash,
-   and any release changes, and push them to the default branch. Let CI pass.
+3. Run the private regression workflow, `npm run check`, `npm run build`, and `nix build`.
+   Complete the [acceptance ledger](release-acceptance.md) for the intended platforms
+   and features. Attach the exact candidate commit, private-suite digest and sanitized
+   report; carry unresolved failures or explicitly excluded claims into the release notes.
+   Public CI builds cannot approve native runtime gates. Obtain the owner's release review
+   before tagging. Commit the version, lockfile, Nix hash and reviewed release changes,
+   and push through the normal review process to the default branch. Let CI pass.
 4. Tag that tested commit and push the tag:
 
    ```sh
@@ -85,3 +94,12 @@ a new version for corrected binaries, and do not move released tags.
 Nix users can pin `github:Nailington/sim-relay/v0.2.0`, or update their existing `sim-relay`
 input to follow the default branch. Homebrew uses each release's pinned DMG URLs and checksums.
 The flake remains a source build and does not consume the GitHub installers.
+
+New macOS release payloads include `sim-relay-web` and `sim-relay-upgrade`; Linux release
+payloads include `sim-relay-web`. The web server and frontend are built into `dist-web`
+and copied outside app.asar, so launchers use the bundled runtime without source/npm.
+`scripts/package-desktop.mjs` checks the actual unpacked application archive/resources
+for the browser entry point, frontend and excluded private validation assets before
+installer assembly. This is a published packaging check, not a private test runner.
+The existing cask is not modified to link commands missing from an already published
+release; the release generator adds the links with the next matching payload.
