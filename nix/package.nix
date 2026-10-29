@@ -37,7 +37,7 @@ buildNpmPackage {
   };
 
   nodejs = nodejs_24;
-  npmDepsHash = "sha256-zWUz0lO3pne1boBFBlw5MyY9eJIIzPP906FSla+EKTg=";
+  npmDepsHash = "sha256-H5Sz1MfbyAr7uOrDM3S/x1JYRqKNw1Hi1TRq6LZoAw4=";
   ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
   # Nix's sandbox cannot use the separately installed Xcode SDK. Audio remains an
   # optional runtime capability; a host owner may supply SIM_RELAY_AUDIO_HELPER.
