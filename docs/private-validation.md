@@ -5,8 +5,10 @@ use a private validation workflow.** This continues the earlier project instruct
 The previously tracked tests and public CI test steps were a mistake, not a policy
 change. Current-tree removal cannot retract copies from previously published Git
 history, forks or downloaded artifacts; historical removal needs a separate decision.
-The [production-only delivery path](production-delivery.md) avoids importing those
-exposed review commits into `main` without rewriting the existing review branches.
+The [coordinated stack delivery procedure](production-delivery.md) uses top-down
+squash merges to keep those exposed feature commits out of newly created `main`
+ancestry without rewriting the existing review branches. Ordinary merge/rebase of
+the original feature commits does not provide that protection.
 
 ## What stays private
 

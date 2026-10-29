@@ -1,7 +1,8 @@
 # Release acceptance ledger
 
-Issue #29 tracks runtime acceptance for the pending stack (#15 → #18 → #17 → #19 →
-#16) and follow-ups #20–#31. The intended release is the next release after 0.1.5;
+Issue #29 tracks runtime acceptance for the coordinated stack through #41 and
+follow-up issues #20–#31. See the [delivery plan](production-delivery.md) for the
+review and merge sequence. The intended release is the next release after 0.1.5;
 no version has been assigned. This ledger does not authorize publishing, merging,
 or closing feature issues. A passing build is a build result, not native acceptance.
 
@@ -54,8 +55,13 @@ its application commit. A public checkout cannot reproduce a missing private bun
   client or reconnection test. [Detailed evidence](native-session-validation.md).
 - **Failed — representative app/AX readiness in that native session run.** Safari
   launch/openurl stalled, SpringBoard had unloaded icons, and AX reported no frontmost
-  app during memory pressure. Devices were shut down. These failures prevented
-  gesture/landscape hit-target acceptance; they were not fixed or rerun successfully.
+  app during memory pressure. Devices were shut down. Those results remain failures
+  for that October 23 run. The October 26 retry subsequently launched Safari and read
+  its XCTest accessibility snapshot; the owned fixture app also launched successfully.
+  October 28 product-path taps passed in portrait and both requested landscape
+  directions. These scoped retries supersede the readiness blocker, without proving
+  every idb AX path, external rotation or the broader gesture matrix.
+  [Retry evidence and limits](acceptance-followup-2026-10-28.md#live-app-rotated-input-audio-and-recording--october-28).
 - **Passed — historical native recording and pinned transfer.** Media implementation
   `1a7c7edb5d144b4f86e8e677a704df2c22b7f356` (version 0.1.5), macOS/Xcode/runtime
   as above; Linux x64 receiving client (OS distribution/version not recorded). Real
@@ -87,16 +93,24 @@ its application commit. A public checkout cannot reproduce a missing private bun
 
 ## Required cases for the integrated candidate
 
-### Orientation, rendering and gestures — not run
+### Orientation, rendering and gestures
 
-Use one dedicated simulator and a known landscape-capable app with visible corner
-hit targets. Record portrait, landscape-left/right and upside-down where supported;
+**Passed — scoped requested-orientation and hit-target checks.** The October 28
+follow-up records real portrait and both requested landscape button hits at half
+stream resolution. Safari launch/XCTest accessibility and the owned fixture app
+readiness retry also passed within the recorded scope.
+
+**Not run — the remaining full orientation and gesture matrix.** Use one dedicated
+simulator and a known landscape-capable app with visible corner hit targets. Record
+portrait, landscape-left/right and upside-down where supported;
 rotate both through the client and Simulator.app. Verify upright content, aspect ratio,
 pointer/touch coordinates, text input, drag/hold, scroll and pinch at each orientation.
 Repeat at reduced stream resolution and display scaling. Log whether companion
 orientation metadata is available; requested rotation alone cannot establish external
 rotation. Record readable screenshots and target outcomes privately. Related: #1, #3,
-#6, #8, #18. The earlier Safari/AX failure remains unresolved for this acceptance case.
+#6, #8, #18. Companion-reported external orientation, upside-down/portrait-locked
+apps and representative gesture/interruption cases remain unaccepted; the successful
+readiness retry does not establish them.
 
 ### Recovery, input release and device lifetime — not run
 
@@ -108,10 +122,13 @@ close/reopen with independent devices. Record actual transport timing, process o
 and final device state. Injected socket tests are separate evidence. Related: #18, #20,
 #21, #27, #28.
 
-### Desktop platforms and OS integration — not run
+### Desktop platforms and OS integration
 
-On supported macOS and Windows versions, install the produced candidate, verify its
-version/signature, open two displays, use multiple monitors and fullscreen, close/reopen
+**Blocked — Windows runtime checks:** no Windows test device is available.
+
+**Not run — installed macOS client and remaining native integrations.** On supported
+macOS and Windows versions, install the produced candidate, verify its version/signature,
+open two displays, use multiple monitors and fullscreen, close/reopen
 the workspace, and use real screenshot/install/recording open/save dialogs. Confirm
 correct dialog parent and Cancel behavior. Restart the app to verify OS-protected
 credential storage; test unavailable storage without persisting plaintext. Record OS,
@@ -130,32 +147,53 @@ fallback only reports download started and retains the owning session until expl
 Discard/Cancel. Browser fixtures with injected sinks/MP4 bytes are not native download
 completion evidence. Related: #5, #16, #24, #26, #28, #30.
 
-### Packaged audio helper — partially verified
+### Packaged audio helper
 
-The owner authorized a follow-up and approved the app helper on October 26. Real tone
-capture, authenticated delivery, restart and owner-crash cleanup passed over SSH with
-the capture user logged in in the background. See [the native report](audio-headless-validation.md).
-This used an ad-hoc development candidate and synthetic video session, without replacing
-the installed app. The signed/notarized release still needs identity, entitlements and
-permission-persistence validation. Use an owned audible fixture, explicit host-wide consent and local opt-in.
+**Passed — development helper capture and authenticated delivery.** The owner approved
+the app helper on October 26. Real tone capture, restart and owner-crash cleanup passed
+over SSH with the capture user logged in in the background. That run used synthetic
+video; the October 28 follow-up additionally delivered the real simulator fixture
+app's tone and native video to a Linux ClientMedia receiver. No PCM was retained.
+See [the helper report](audio-headless-validation.md) and
+[the later simulator run](acceptance-followup-2026-10-28.md).
+
+**Not run — audible playback and release identity/persistence.** Neither run proved
+actual speaker playback or replaced the installed app. The signed/notarized release
+still needs identity, entitlements and permission-persistence validation. Use an owned
+audible fixture, explicit host-wide consent and local opt-in.
 Measure audible playback, mute/volume, output-device changes, disconnect cleanup and
 flash/click A/V skew. Test denied permission separately without changing TCC policy.
 Do not claim per-simulator audio isolation or guaranteed lip-sync. SSH/MDM research is
 not a permission grant. Related: #11, #13, #19.
 
-### Constrained-network responsiveness — not run
+### Constrained-network responsiveness
 
-Apply and record actual bandwidth, delay, jitter and loss on an owned test route.
+**Passed — scoped shaped encrypted receipt fixture.** The October 26 proxy run
+limited actual TLS/WSS traffic to 1 Mbps and at least 30 ms one-way delay. Adaptive
+receipt FPS improved within bounded proxy queues. It used an owned historical JPEG
+and synthetic zero-decode-time feedback; it did not measure client rendering.
+[Measurements and limits](acceptance-followup-2026-10-28.md#actual-shaped-encrypted-connection--october-26).
+
+**Not run — end-to-end readability and interaction performance.** Apply and record
+actual bandwidth, delay, jitter and loss on an owned test route.
 Use representative text, scrolling and gestures at fixed and adaptive quality. Report
 readability, delivered FPS, bitrate and measured frame/input-to-photon latency with
 measurement method. Label control ping RTT separately. Include cancellation and
 recovery without replaying non-idempotent commands. Synthetic JPEG/H.264 size comparisons
 and an internal bitrate budget do not establish WAN performance. Related: #6, #19, #26.
 
-### Recording lifecycle and data loss — partly passed historically; candidate not run
+### Recording lifecycle and data loss
 
-Record representative portrait and landscape app interaction; save through each real
-client, play and completely decode the MP4, and compare expected orientation/duration.
+**Passed — scoped real landscape recording/save/decode.** The final follow-up source
+produced a real H.264 movie through pinned HTTPS, with upright 2622×1206 presentation,
+and fully decoded it. Private parser checks also preserved encoded media bytes.
+[Exact source, movie digest and scope](acceptance-followup-2026-10-28.md).
+
+**Not run — the full native lifecycle/save matrix.** Presentation is captured at
+recording start; a mid-recording rotation does not update it dynamically. Test that
+behavior explicitly and start a new recording when changing orientation. Record
+representative portrait and landscape app interaction; save through each real client,
+play and completely decode the MP4, and compare expected orientation/duration.
 Exercise Save/Discard/Cancel during target changes, disconnect, pop-out/return, shutdown,
 window close and quit. Cancel must preserve target, FPS, active/ready recording and
 transport. Confirm desktop ownership transfers retain capture. Interrupt a save and
@@ -164,8 +202,17 @@ of owned files/processes. Socket-bound host tickets have no retention grace. Con
 ordinary disconnect and forced revocation delete unsaved host recordings. Related:
 #19, #24, #28.
 
-### Host service, keep-awake and upgrades — not run natively
+### Host service, keep-awake and upgrades
 
+**Passed — isolated native service and power checks.** Real launchd, the production
+service manager, local administration and pinned transport passed lifecycle, pairing,
+scoped viewer denial, two-client revoke isolation and upgrade prepare/resume checks.
+The production keep-awake module acquired/released an actual idle-sleep assertion.
+The service run used a synthetic simulator backend and a separate validation label;
+it did not replace the installed app or Homebrew package.
+[Recorded environment, cleanup and limits](acceptance-followup-2026-10-28.md#host-lifecycle-authorization-and-power--october-26).
+
+**Not run — installed-app, login/logout, actual package replacement and sleep/wake.**
 From the packaged Mac app and CLI, select the same configuration, start/stop/restart,
 rotate/copy the current code and review/revoke/grant clients. Test real login/logout
 with start-at-login enabled and disabled independently of current running state.
@@ -179,9 +226,15 @@ Exercise prepare/install/resume failures without success acknowledgment or unint
 restart. Historical 0.1.5 installations lack the new wrapper; follow the documented
 migration. Related: #20–#22, #25, #27, #28.
 
-### Authorization, migration, routes and private publication — candidate pending
+### Authorization, migration, routes and private publication
 
-Update clients first, upgrade a legacy host, verify the existing certificate fingerprint,
+**Passed — scoped authorization and publication checks.** The isolated native
+service run tested pairing, viewer input denial and two-client revocation. The final
+follow-up inspected an actual Linux payload and evaluated Nix sources for excluded
+private assets. These do not establish every permission, route or migration case.
+
+**Not run — the remaining real-client migration and network-route matrix.** Update
+clients first, upgrade a legacy host, verify the existing certificate fingerprint,
 re-pair every intended client, then grant permissions locally. Distinguish wrong code,
 revoked identity, legacy pairing and owner-denied access. Test viewer versus controller,
 explicit device lists and each optional action from desktop and browser. Permission

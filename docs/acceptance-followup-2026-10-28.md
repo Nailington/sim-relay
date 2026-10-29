@@ -129,9 +129,11 @@ The adaptation implementation was unchanged by the later acceptance fixes.
 
 PR descriptions #15/#17/#16/#19/#33 were refreshed. The automatic closing reference in
 #15 was removed; all current open PR descriptions were checked for closing keywords.
-The original review layers remain unmerged. Use the [production-only delivery path](production-delivery.md)
-to avoid importing their test-containing feature history into main. This does not retract
-historically exposed main/branch commits, PR refs, forks or downloads.
+The original review layers remain unmerged. The owner subsequently chose to prepare
+all 15 PRs for a [coordinated top-down squash delivery](production-delivery.md), with #41
+as the top layer and #15 into main last. The earlier standalone candidate is preserved
+as evidence. Squash and ancestry audits remain required to avoid importing feature-test
+commits; they do not retract historically exposed objects, PR refs, forks or downloads.
 
 The following remain **blocked** or **not run**, not implicit passes:
 
