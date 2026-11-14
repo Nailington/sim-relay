@@ -58,9 +58,15 @@ cask "sim-relay" do
   depends_on macos: :ventura
 
   app "Sim Relay.app"
-  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"
-  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-web"
-  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-upgrade"
+  command_wrapper "sim-relay-host",
+                  executable: "/bin/sh",
+                  args: ["#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"]
+  command_wrapper "sim-relay-web",
+                  executable: "/bin/sh",
+                  args: ["#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-web"]
+  command_wrapper "sim-relay-upgrade",
+                  executable: "/bin/sh",
+                  args: ["#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-upgrade"]
 
   uninstall launchctl: ["dev.simrelay.host", "dev.simrelay.web"]
 
@@ -70,7 +76,7 @@ cask "sim-relay" do
     "~/Library/Logs/Sim Relay",
   ]
 
-  caveats "Use sim-relay-upgrade for background-host upgrades. See https://github.com/${repository}/blob/v${version}/docs/macos.md"
+  caveats "Requires macOS 13.5 or newer. Use sim-relay-upgrade for background-host upgrades. See https://github.com/${repository}/blob/v${version}/docs/macos.md"
 end
 `;
 }

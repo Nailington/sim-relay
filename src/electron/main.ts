@@ -50,15 +50,19 @@ const displays = new Map<number, DisplayContext>();
 const sessions = new SessionRouter<number, RelaySession>();
 const identities = new WeakMap<RelaySession, DisplayContext>();
 const mediaBySession = new WeakMap<RelaySession, ClientMedia>();
+const hostLauncher = path.join(process.resourcesPath, 'bin/sim-relay-host');
 const hostService = createServiceManager({
   launch: {
-    args: [
-      process.execPath,
-      app.isPackaged
-        ? path.join(process.resourcesPath, 'host/host.cjs')
-        : path.resolve(__dirname, '../dist-host/host.cjs'),
-      'serve',
-    ],
+    args:
+      app.isPackaged && process.platform === 'darwin' && existsSync(hostLauncher)
+        ? ['/bin/sh', hostLauncher, 'serve']
+        : [
+            process.execPath,
+            app.isPackaged
+              ? path.join(process.resourcesPath, 'host/host.cjs')
+              : path.resolve(__dirname, '../dist-host/host.cjs'),
+            'serve',
+          ],
     workingDirectory: app.getPath('home'),
   },
 });

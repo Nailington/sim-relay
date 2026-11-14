@@ -103,3 +103,28 @@ for the browser entry point, frontend and excluded private validation assets bef
 installer assembly. This is a published packaging check, not a private test runner.
 The existing cask is not modified to link commands missing from an already published
 release; the release generator adds the links with the next matching payload.
+
+### macOS CLI runtime
+
+The packaging entry points fetch pinned Node.js 24.22.3 archives from nodejs.org and
+verify architecture-specific SHA-256 checksums before extraction. The runtime binary,
+version and upstream LICENSE ship in `Contents/Resources/runtime`; electron-builder
+signs the enclosed Mach-O before signing/notarizing the app. The macOS CLI launchers
+use a content-addressed copy outside the desktop bundle, preserving signed bytes and
+extended attributes. Packaging checks require these resources. Nix continues to use
+its own Node dependency, and Linux launchers are unchanged.
+
+Before a macOS release, privately verify host help/version/status, browser help and
+serving, service migration/start/stop, direct and symlinked commands from another
+working directory, cache creation/reuse/concurrent starts, and a blocked runtime's
+bounded failure. Run on both architectures against the signed candidate at its actual
+installation path, including an upgrade from an Electron-backed service configuration.
+The private runtime checks are required evidence; public payload checks alone do not
+establish this acceptance.
+
+Homebrew casks use `command_wrapper` with `/bin/sh`, rather than linking directly to
+a script inside the app. Manual command installation writes an equivalent external
+shim. Both host and browser LaunchAgents, and the coordinated upgrade worker, also
+explicitly invoke the system shell. This matters because macOS can suspend a script's
+interpreter before it runs when the script itself is executed from the affected app
+path. A CLI runtime change alone does not cover that entry point.

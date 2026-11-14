@@ -1,7 +1,7 @@
 {
   "name": "ios-sim-stream",
   "productName": "Sim Relay",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -15,8 +15,8 @@
     "web": "tsx src/web/cli.ts",
     "build": "tsc --noEmit && vite build && node scripts/build.mjs",
     "check": "tsc --noEmit",
-    "package": "npm run build && electron-builder",
-    "package:dir": "npm run build && electron-builder --dir",
+    "package": "npm run build && node scripts/prepare-cli-runtime.mjs && electron-builder",
+    "package:dir": "npm run build && node scripts/prepare-cli-runtime.mjs && electron-builder --dir",
     "format": "prettier --write src scripts *.json *.ts *.html *.md .github docs"
   },
   "dependencies": {
@@ -77,7 +77,7 @@
         "NSScreenCaptureUsageDescription": "Capture Mac playback audio for Sim Relay. Desktop video is not sent."
       },
       "artifactName": "Sim-Relay-${version}-mac-${arch}.${ext}",
-      "minimumSystemVersion": "13.0",
+      "minimumSystemVersion": "13.5",
       "entitlements": "packaging/entitlements.mac.plist",
       "entitlementsInherit": "packaging/entitlements.mac.plist",
       "extraResources": [
@@ -104,6 +104,14 @@
         {
           "from": "packaging/services",
           "to": "services"
+        },
+        {
+          "from": "dist-runtime",
+          "to": "runtime"
+        },
+        {
+          "from": "packaging/macos/sim-relay-runtime",
+          "to": "bin/sim-relay-runtime"
         }
       ],
       "executableName": "Sim Relay"

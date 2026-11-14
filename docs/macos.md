@@ -1,6 +1,6 @@
 # Install and set up Sim Relay on macOS
 
-The desktop client requires macOS 13 Ventura or newer and runs on Apple Silicon and Intel.
+The desktop client requires macOS 13.5 Ventura or newer and runs on Apple Silicon and Intel.
 Only a Mac that shares simulators needs Xcode, an iOS runtime, and `idb_companion`.
 A Mac used only as a client does not need those tools.
 
@@ -13,7 +13,13 @@ an Intel **Processor** entry means `x64`.
 Download `Sim-Relay-VERSION-mac-arm64.dmg` or `Sim-Relay-VERSION-mac-x64.dmg` for your Mac.
 Open the disk image, drag **Sim Relay** to **Applications**, eject the image, and open the app.
 The corresponding ZIP is an alternative: extract it and move **Sim Relay.app** to Applications.
-Node.js is included in the app runtime; no separate Node installation is required.
+The app includes a standalone Node.js 24 runtime for the host and browser commands;
+no separate Node installation is required. The launchers install its signed bytes into
+`~/Library/Caches/dev.simrelay.cli/<SHA-256>/node` on first use and verify them against
+the bundled runtime on every launch. The cache is separate from the desktop app's
+location, so macOS policy state for the `.app` cannot stall its CLI runtime. Signing
+and quarantine metadata are preserved. The cache contains no pairing state or settings
+and may be removed while the host and browser service are stopped.
 
 To use the host from Terminal after installing the DMG or ZIP, choose **Sim Relay →
 Install host command…** in the app menu. Approve the macOS administrator prompt, then open
@@ -23,10 +29,10 @@ a new Terminal window and run:
 sim-relay-host
 ```
 
-This links the bundled command into `/usr/local/bin`. Keep the app in Applications;
+This installs a small shell launcher into `/usr/local/bin`. Keep the app in Applications;
 replacing it there during an upgrade also updates the command. If your shell uses a custom
 PATH, include `/usr/local/bin`. To remove a manually installed command, run
-`sudo rm /usr/local/bin/sim-relay-host`. Removing the link does not delete pairing state.
+`sudo rm /usr/local/bin/sim-relay-host`. Removing the launcher does not delete pairing state.
 
 Release notes and `release.json` state whether that release is Developer ID signed and
 notarized. For an unsigned/ad-hoc build that you trust, attempt to open it, then use
@@ -46,7 +52,9 @@ brew install --cask nailington/sim-relay/sim-relay
 open -a "Sim Relay"
 ```
 
-Homebrew also installs `sim-relay-host` on your PATH automatically. Run it from any
+Homebrew installs command wrappers on your PATH for `sim-relay-host`, `sim-relay-web`
+and `sim-relay-upgrade`. The wrappers explicitly invoke the system shell, so macOS
+does not execute an entry point inside the app bundle. Run it from any
 directory; there is no separate Node.js, npm, or source checkout setup. You do not need
 the app's **Install host command…** menu item when installing with Homebrew. Homebrew
 upgrades and uninstalls manage the command along with the app.
@@ -292,3 +300,27 @@ provide a general transactional upgrade/rollback callback. This cask therefore l
 coordinated wrapper rather than inventing an `upgrade_preflight` hook or terminating
 processes by name. The native Homebrew/launchd upgrade acceptance still requires a real Mac;
 portable wrapper fixtures establish ordering and failure behavior only.
+
+## CLI startup stalls
+
+Some macOS installations can suspend native executables inside an installed app before
+any JavaScript runs. A process sample shows `_dyld_start`, while the kernel log reports
+`AppleSystemPolicy` refusing the process. Signature/notarization assessment can still
+pass. Reinstalling the same app at the same path or changing Electron versions does not
+necessarily clear this state. This is separate from screen or audio capture permission.
+
+From 0.2.2, Homebrew and manual commands invoke the bundled scripts through the system
+shell; background services and coordinated upgrades use that same invocation. The
+macOS host and browser launchers use a separate, bundled Node runtime outside
+the `.app` directory. Background-host configuration from earlier releases migrates to
+the launcher when managed with the updated CLI or GUI; saved settings and pairings are
+retained. The runtime has a ten-second startup probe, which reports a blocked launch
+instead of waiting indefinitely. The actual host/browser process still receives terminal
+input, signals, arguments and exit status directly.
+
+If the runtime probe fails, open Sim Relay once and check **System Settings → Privacy &
+Security** for a macOS approval request. Use the opening instructions above and contact
+your administrator for managed security policies. Do not disable Gatekeeper or reset
+capture permissions to address a startup failure. If a cache verification error names a
+specific cache directory, stop the services, remove only that directory, and retry; the
+launcher recreates it from the bundled runtime. Do not delete your host state directory.

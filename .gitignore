@@ -3,6 +3,7 @@ dist/
 dist-electron/
 dist-host/
 dist-web/
+dist-runtime/
 release/
 .env
 .signing/

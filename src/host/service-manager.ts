@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile, rename, rm, open, chmod, stat } from 'node:
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { clientAdminRequest } from './client-admin';
 import { createKeepAwake } from './keep-awake';
@@ -63,8 +64,16 @@ export const serviceStatusFile = (directory: string, pid: number) =>
 export const serviceRetirementFile = (directory: string, pid: number) =>
   path.join(directory, `service-retired-${pid}.json`);
 export function cliServiceLaunch(): ServiceLaunch {
+  const entry = path.resolve(process.argv[1]);
+  const launcher = path.resolve(path.dirname(entry), '../bin/sim-relay-host');
+  if (
+    process.platform === 'darwin' &&
+    path.basename(path.dirname(entry)) === 'host' &&
+    existsSync(launcher)
+  )
+    return { args: ['/bin/sh', launcher, 'serve'], workingDirectory: homedir() };
   return {
-    args: [process.execPath, ...process.execArgv, path.resolve(process.argv[1]), 'serve'],
+    args: [process.execPath, ...process.execArgv, entry, 'serve'],
     workingDirectory: process.argv[1].endsWith('.ts') ? process.cwd() : homedir(),
   };
 }
@@ -138,7 +147,7 @@ export function createServiceManager(
         typeof saved.startAtLogin !== 'boolean'
       )
         throw new Error(`Cannot read saved background host settings: ${savedFile}`);
-      return saved;
+      return migrateRuntime(saved);
     }
     let previous: Agent | undefined;
     try {
@@ -173,14 +182,40 @@ export function createServiceManager(
     if (process.versions.electron || previous?.EnvironmentVariables.ELECTRON_RUN_AS_NODE === '1')
       env.ELECTRON_RUN_AS_NODE = '1';
     env.SIM_RELAY_STATE_DIR = path.resolve(env.SIM_RELAY_STATE_DIR);
-    return {
+    return migrateRuntime({
       version: 1,
       environment: env,
       startAtLogin: !!previous,
       launch: previous
         ? { args: previous.ProgramArguments, workingDirectory: previous.WorkingDirectory ?? home }
         : (dependencies.launch ?? cliServiceLaunch()),
-    };
+    });
+  }
+  function migrateRuntime(config: Configuration): Configuration {
+    const launch = dependencies.launch ?? cliServiceLaunch();
+    const old = config.launch.args;
+    // Upgrade stopped/pre-existing services as well as coordinated handoffs. Keep
+    // their settings, pairing state and login preference, but retire the desktop
+    // executable (or a manually selected Node workaround) as the host runtime.
+    if (
+      launch.args.length === 3 &&
+      launch.args[0] === '/bin/sh' &&
+      launch.args[1].endsWith('/Contents/Resources/bin/sim-relay-host') &&
+      launch.args[2] === 'serve' &&
+      ((old.length === 2 &&
+        old[0].endsWith('/Contents/Resources/bin/sim-relay-host') &&
+        old[1] === 'serve') ||
+        (old.length === 3 &&
+          old[2] === 'serve' &&
+          ((old[0] === '/bin/sh' && old[1].endsWith('/Contents/Resources/bin/sim-relay-host')) ||
+            (old[1].endsWith('/Contents/Resources/host/host.cjs') &&
+              (old[0].endsWith('/Contents/MacOS/Sim Relay') || path.basename(old[0]) === 'node')))))
+    ) {
+      const environment = { ...config.environment };
+      delete environment.ELECTRON_RUN_AS_NODE;
+      return { ...config, launch, environment };
+    }
+    return config;
   }
   function settings(config: Configuration): HostServiceSettings {
     const env = config.environment;
@@ -583,12 +618,13 @@ export function createServiceManager(
           throw new Error(
             'A service was started during the upgrade. Stop it before resuming this handoff.',
           );
-        const config = {
+        const config = migrateRuntime({
           ...existing.configuration,
           launch: dependencies.launch ?? cliServiceLaunch(),
-        };
+        });
         // Refresh runtime paths after app replacement without changing pairing, bind, audio, or login settings.
-        if (process.versions.electron) config.environment.ELECTRON_RUN_AS_NODE = '1';
+        if (process.versions.electron && config.launch.args[0] === process.execPath)
+          config.environment.ELECTRON_RUN_AS_NODE = '1';
         await save(savedFile, config);
         if (existing.priorRunning) {
           try {
