@@ -2,8 +2,8 @@
 
 Issue #29 tracks runtime acceptance for the coordinated stack through #41 and
 follow-up issues #20–#31. See the [delivery plan](production-delivery.md) for the
-review and merge sequence. The intended release is the next release after 0.1.5;
-no version has been assigned. This ledger does not authorize publishing, merging,
+review and merge sequence. The intended release is 0.2.0, after 0.1.5.
+This ledger does not authorize publishing, merging,
 or closing feature issues. A passing build is a build result, not native acceptance.
 
 ## Recording a result
