@@ -2,9 +2,9 @@
 cask "sim-relay" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.1.5"
-  sha256 arm:   "065fba01d81fe6b52a33215e49b909865835fa11dd9736ac3b32fb837d0750d4",
-         intel: "5be34748440750cb421b841018e3d293eb83740835e1a6f374c8afa760e4584d"
+  version "0.2.0"
+  sha256 arm:   "58f4ecc1d0adde8a4d52940056a812ff3bb93f70137fcec5394ceb15909f6dd2",
+         intel: "b7c6505ff09d606c8c7c63b5a84cae65a14261fa09909519d20c364a2276b7df"
 
   url "https://github.com/Nailington/sim-relay/releases/download/v#{version}/Sim-Relay-#{version}-mac-#{arch}.dmg"
   name "Sim Relay"
@@ -15,12 +15,16 @@ cask "sim-relay" do
 
   app "Sim Relay.app"
   binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"
+  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-web"
+  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-upgrade"
 
-  uninstall launchctl: "dev.simrelay.host"
+  uninstall launchctl: ["dev.simrelay.host", "dev.simrelay.web"]
 
   zap trash: [
     "~/Library/Application Support/Sim Relay",
     "~/Library/Application Support/ios-sim-stream",
     "~/Library/Logs/Sim Relay",
   ]
+
+  caveats "Use sim-relay-upgrade for background-host upgrades. See https://github.com/Nailington/sim-relay/blob/v0.2.0/docs/macos.md"
 end

@@ -121,10 +121,6 @@ jobs:
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git commit -m "chore(homebrew): update Sim Relay to $RELEASE_VERSION"
-            # Homebrew requires casks to live in a tap. Validate a temporary local
-            # clone of this commit before updating the public tap.
-            brew tap sim-relay-ci/validate "file://$PWD"
-            trap 'brew untap sim-relay-ci/validate' EXIT
-            brew info --json=v2 --cask sim-relay-ci/validate/sim-relay
+            bash scripts/validate-homebrew-cask.sh
             git push origin "HEAD:$DEFAULT_BRANCH"
           fi
