@@ -2,9 +2,9 @@
 cask "sim-relay" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.2.1"
-  sha256 arm:   "c875c8677c0ca7bb4baa47049aae1a4d9b7fb67013764fe1b3a4baeca167c78c",
-         intel: "830b645d91b9b2c4eccfea38687317c1a21722ef70150380cfbad77453c66156"
+  version "0.2.2"
+  sha256 arm:   "ee4ed06509172aa7f0e58a1404bc4cc1a3f37827a579d836e2a785c6f7ac9fe9",
+         intel: "843dda0ea5069576218c2f277991bbd0d6c20f4885ba4c88c5292bd99c675b09"
 
   url "https://github.com/Nailington/sim-relay/releases/download/v#{version}/Sim-Relay-#{version}-mac-#{arch}.dmg"
   name "Sim Relay"
@@ -14,9 +14,15 @@ cask "sim-relay" do
   depends_on macos: :ventura
 
   app "Sim Relay.app"
-  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"
-  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-web"
-  binary "#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-upgrade"
+  command_wrapper "sim-relay-host",
+                  executable: "/bin/sh",
+                  args: ["#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-host"]
+  command_wrapper "sim-relay-web",
+                  executable: "/bin/sh",
+                  args: ["#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-web"]
+  command_wrapper "sim-relay-upgrade",
+                  executable: "/bin/sh",
+                  args: ["#{appdir}/Sim Relay.app/Contents/Resources/bin/sim-relay-upgrade"]
 
   uninstall launchctl: ["dev.simrelay.host", "dev.simrelay.web"]
 
@@ -26,5 +32,5 @@ cask "sim-relay" do
     "~/Library/Logs/Sim Relay",
   ]
 
-  caveats "Use sim-relay-upgrade for background-host upgrades. See https://github.com/Nailington/sim-relay/blob/v0.2.1/docs/macos.md"
+  caveats "Requires macOS 13.5 or newer. Use sim-relay-upgrade for background-host upgrades. See https://github.com/Nailington/sim-relay/blob/v0.2.2/docs/macos.md"
 end
