@@ -22,3 +22,6 @@ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Other dependencies retain their respective licenses in their installed packages.
+
+The macOS CLI bundles Node.js 24.22.3 from https://nodejs.org/. Its complete license and
+third-party notices are included at `Contents/Resources/runtime/LICENSE` in the app.

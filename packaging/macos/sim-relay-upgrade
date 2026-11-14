@@ -50,7 +50,7 @@ cleanup() {
   result=$?
   trap - EXIT HUP INT TERM
   if [ "$prepared" -eq 1 ] && [ "$complete" -ne 1 ]; then
-    if [ -x "$host" ]; then "$host" upgrade abort || true; fi
+    if [ -x "$host" ]; then /bin/sh "$host" upgrade abort || true; fi
     echo 'Upgrade did not finish. The background host remains stopped. Verify or repair the installed app, then run sim-relay-host upgrade resume. Run sim-relay-host logs if it cannot start.' >&2
     [ "$result" -ne 0 ] || result=1
   fi
@@ -62,10 +62,10 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
 # prepare refuses unrelated foreground hosts and returns only after owned cleanup.
-"$host" upgrade prepare
+/bin/sh "$host" upgrade prepare
 prepared=1
 "$brew" upgrade --cask nailington/sim-relay/sim-relay
 [ -x "$host" ] || { echo 'Homebrew returned, but the installed host command is missing. Reinstall the cask before resuming.' >&2; exit 1; }
 # Resolve the stable installed launcher again, never a Caskroom version path.
-"$host" upgrade resume
+/bin/sh "$host" upgrade resume
 complete=1

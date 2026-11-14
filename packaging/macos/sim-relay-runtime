@@ -1,0 +1,57 @@
+#!/bin/bash
+set -eu
+
+# Install the signed CLI runtime outside the desktop .app. AppleSystemPolicy can
+# suspend every native executable inside a particular app path before main().
+# ditto/ln preserve the runtime's signature and extended attributes.
+resources=$1
+source_node=$resources/runtime/node
+[ -x "$source_node" ] || { echo 'The bundled CLI runtime is missing. Reinstall Sim Relay.' >&2; exit 1; }
+digest=$(/usr/bin/shasum -a 256 "$source_node" | /usr/bin/awk '{print $1}')
+root=$HOME/Library/Caches/dev.simrelay.cli
+cache=$root/$digest
+umask 077
+/bin/mkdir -p "$cache"
+work=$(/usr/bin/mktemp -d "$root/.startup.XXXXXXXX")
+child=
+watchdog=
+cleanup() {
+  [ -z "$child" ] || /bin/kill -KILL "$child" 2>/dev/null || true
+  [ -z "$watchdog" ] || /bin/kill "$watchdog" 2>/dev/null || true
+  /bin/rm -rf "$work"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+if [ ! -f "$cache/node" ]; then
+  /usr/bin/ditto "$source_node" "$work/node"
+  # Exclusive link: concurrent CLI starts must never replace an executing binary.
+  /bin/ln "$work/node" "$cache/node" 2>/dev/null || true
+fi
+if [ ! -x "$cache/node" ] || [ "$(/usr/bin/shasum -a 256 "$cache/node" | /usr/bin/awk '{print $1}')" != "$digest" ]; then
+  echo "The CLI runtime cache is damaged. Remove $cache and try again." >&2
+  exit 1
+fi
+
+# A bounded probe catches macOS launch-policy stalls before exec'ing a long-lived
+# host. The timer uses bash's read builtin so cancellation leaves no sleep process.
+/usr/bin/mkfifo "$work/timer"
+exec 3<>"$work/timer"
+"$cache/node" -e '' >&2 &
+child=$!
+(
+  if ! read -r -t 10 <&3; then /bin/kill -KILL "$child" 2>/dev/null || true; fi
+) &
+watchdog=$!
+result=0
+wait "$child" || result=$?
+child=
+printf 'cancel\n' >&3
+wait "$watchdog" || true
+watchdog=
+exec 3>&-
+if [ "$result" -ne 0 ]; then
+  echo 'The bundled CLI runtime failed to start (startup is limited to 10 seconds). macOS may have blocked it. Open Sim Relay once and check System Settings > Privacy & Security, then retry. See docs/macos.md for startup troubleshooting.' >&2
+  exit 1
+fi
+printf '%s\n' "$cache/node"

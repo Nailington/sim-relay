@@ -1,7 +1,9 @@
 // Published packaging check: inspect the real application, not validation fixtures.
 import { listPackage } from '@electron/asar';
 import { access, readdir, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
+import { cliNodeVersion } from './prepare-cli-runtime.mjs';
 
 const privateAsset =
   /(?:^|\/)(?:tests|\.private-validation|fixtures)(?:\/|$)|(?:^|\/)(?:benchmark-media\.ts|build-media-fixture\.mjs|validate-mac-media\.ts|validate-media-download\.ts|desktop-smoke\.cjs|ci-smoke\.mjs|mac-e2e\.ts)$/;
@@ -30,8 +32,19 @@ export async function checkPackagedApp(context) {
   };
   await inspect(resources);
   if (context.electronPlatformName === 'darwin') {
-    for (const file of ['bin/sim-relay-upgrade', 'bin/sim-relay-host', '../MacOS/Sim Relay'])
+    for (const file of [
+      'bin/sim-relay-upgrade',
+      'bin/sim-relay-host',
+      'bin/sim-relay-runtime',
+      'runtime/node',
+      'runtime/LICENSE',
+      'runtime/version',
+      '../MacOS/Sim Relay',
+    ])
       await access(path.join(resources, file));
+    await access(path.join(resources, 'runtime/node'), constants.X_OK);
+    if ((await readFile(path.join(resources, 'runtime/version'), 'utf8')).trim() !== cliNodeVersion)
+      throw new Error('The packaged CLI runtime does not match its pinned version.');
     const audioApp = path.join(resources, 'host/Sim Relay Audio.app/Contents');
     await access(path.join(audioApp, 'MacOS/sim-relay-audio'));
     const info = await readFile(path.join(audioApp, 'Info.plist'), 'utf8');

@@ -3,6 +3,7 @@
 <plist version="1.0"><dict>
 <key>Label</key><string>dev.simrelay.web</string>
 <key>ProgramArguments</key><array>
+<string>/bin/sh</string>
 <string>/Applications/Sim Relay.app/Contents/Resources/bin/sim-relay-web</string>
 <string>serve</string></array>
 <key>EnvironmentVariables</key><dict>
