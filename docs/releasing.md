@@ -28,8 +28,9 @@ the native `windows-11-arm` runner.
 ## One-time setup
 
 Enable GitHub Actions in the repository. The release and Homebrew jobs request `contents:
-write` using the built-in `GITHUB_TOKEN`; no personal token or separate tap repository is
-required. Normal build jobs remain read-only.
+write` using the built-in `GITHUB_TOKEN`. Normal build jobs remain read-only.
+The shared [Nailington tap](https://github.com/Nailington/homebrew-tap) uses the
+cask attached to each stable GitHub Release.
 
 For Apple signing, follow [the macOS guide](macos.md#signing-releases-with-your-apple-developer-program-account).
 Without signing configuration, the pipeline produces clearly labeled unsigned/ad-hoc builds.
@@ -39,10 +40,9 @@ Apple membership does not provide a Windows signing certificate. Once either pla
 signing variable is enabled, missing or invalid credentials fail its build.
 
 Stable releases write the generated, versioned cask to `Casks/sim-relay.rb` on the default
-branch. This is what makes `brew update` and `brew upgrade` work. The workflow checks the
-current cask version and never replaces it with an older or equal release. It does not
-force-push. The first stable release creates the cask; Homebrew installation is available
-after that job succeeds.
+branch for existing installations that use this repository as a tap. The workflow
+checks the current cask version, updates it only for newer releases, and pushes
+without force.
 
 If branch protection blocks the Homebrew bot's commit, the GitHub Release remains available
 and the Homebrew job fails visibly. Download the attached `sim-relay.rb`, submit that file

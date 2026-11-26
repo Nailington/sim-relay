@@ -1,14 +1,12 @@
-# Homebrew tap
+# Homebrew cask
 
-The first stable tagged release generates `sim-relay.rb` here with its version, architecture
-mapping, and SHA-256 checksums. Later stable releases update it automatically on the default
-branch. No placeholder URLs or checksums are used before a release exists.
+Stable releases generate `sim-relay.rb` with the version, architecture mapping, and
+SHA-256 checksums. This copy supports existing installations from this repository.
 
-After that first release completes:
+Install Sim Relay from the [Nailington tap](https://github.com/Nailington/homebrew-tap):
 
 ```sh
-brew tap nailington/sim-relay https://github.com/Nailington/sim-relay.git
-brew install --cask nailington/sim-relay/sim-relay
+brew install --cask nailington/tap/sim-relay
 ```
 
 New generated casks install the desktop app and link its bundled `sim-relay-host`,

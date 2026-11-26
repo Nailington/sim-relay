@@ -42,13 +42,11 @@ Do not disable Gatekeeper globally. Managed Macs may require administrator appro
 
 ## Install with Homebrew
 
-After the first stable release has completed its **homebrew** job, this repository also
-serves as a custom tap. Homebrew selects the matching Mac architecture and checks the
-release's SHA-256 checksum:
+Install from the [Nailington tap](https://github.com/Nailington/homebrew-tap). Homebrew
+selects the matching Mac architecture and verifies the release's SHA-256 checksum:
 
 ```sh
-brew tap nailington/sim-relay https://github.com/Nailington/sim-relay.git
-brew install --cask nailington/sim-relay/sim-relay
+brew install --cask nailington/tap/sim-relay
 open -a "Sim Relay"
 ```
 
@@ -59,8 +57,7 @@ directory; there is no separate Node.js, npm, or source checkout setup. You do n
 the app's **Install host command…** menu item when installing with Homebrew. Homebrew
 upgrades and uninstalls manage the command along with the app.
 
-Use the explicit Git URL when tapping: the repository is named `sim-relay`, rather than
-Homebrew's conventional `homebrew-sim-relay`. To upgrade:
+To upgrade from your installed tap:
 
 ```sh
 brew update
@@ -68,8 +65,9 @@ sim-relay-upgrade
 ```
 
 Homebrew does not install Xcode or `idb_companion` for client-only use. It also does not
-bypass macOS security prompts for unsigned builds. Pre-releases do not update this tap.
-To uninstall, use `brew uninstall --cask nailington/sim-relay/sim-relay`. Adding `--zap`
+bypass macOS security prompts for unsigned builds. Pre-releases are available from GitHub Releases.
+To uninstall an installation from the Nailington tap, use
+`brew uninstall --cask nailington/tap/sim-relay`. Adding `--zap`
 also removes the desktop app's saved pairings and settings; CLI state in `~/.sim-relay`
 is kept separately. Homebrew also stops and removes the background host service on uninstall.
 

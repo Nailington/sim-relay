@@ -23,11 +23,10 @@ Packaged apps include their runtime and do not require Node.js. Local packaging 
 are written to `release/`.
 
 For macOS installation, Homebrew, permissions, and Xcode host setup, follow the
-[macOS guide](docs/macos.md). After the first stable release, install through Homebrew with:
+[macOS guide](docs/macos.md). Install through Homebrew with:
 
 ```sh
-brew tap nailington/sim-relay https://github.com/Nailington/sim-relay.git
-brew install --cask nailington/sim-relay/sim-relay
+brew install --cask nailington/tap/sim-relay
 ```
 
 To publish versions, see [CI and releases](docs/releasing.md), including

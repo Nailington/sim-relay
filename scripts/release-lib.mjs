@@ -133,6 +133,7 @@ export async function assembleRelease({
       `macOS: ${macSigned ? 'Developer ID signed and notarized.' : 'ad-hoc signed; not notarized. See the macOS installation guide before opening.'}`,
       `Windows: ${windowsSigned ? 'certificate signed.' : 'unsigned; Windows may display a publisher warning.'}`,
       `Installation and Mac host setup: https://github.com/${repository}/blob/v${version}/docs/macos.md`,
+      ...(!prerelease ? ['Homebrew: `brew install --cask nailington/tap/sim-relay`.'] : []),
       `Upgrade instructions and compatibility: https://github.com/${repository}/blob/v${version}/docs/upgrading.md`,
       `Feature limitations and validation status: https://github.com/${repository}/blob/v${version}/docs/release-acceptance.md`,
       'SHA256SUMS covers every attached installer and metadata file. The app does not auto-update; install a newer release or use sim-relay-upgrade for a coordinated Homebrew background-host upgrade.',

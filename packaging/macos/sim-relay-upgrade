@@ -61,10 +61,15 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
+# Use the installed cask's tap when both the current and legacy taps are configured.
+installed_casks=$("$brew" list --cask --full-name -1)
+cask=$(printf '%s\n' "$installed_casks" | awk 'tolower($0) ~ /^nailington\/(tap|sim-relay)\/sim-relay$/ { print; exit }')
+[ -n "$cask" ] || { echo 'No Homebrew installation of Sim Relay from Nailington was found.' >&2; exit 1; }
+
 # prepare refuses unrelated foreground hosts and returns only after owned cleanup.
 /bin/sh "$host" upgrade prepare
 prepared=1
-"$brew" upgrade --cask nailington/sim-relay/sim-relay
+"$brew" upgrade --cask "$cask"
 [ -x "$host" ] || { echo 'Homebrew returned, but the installed host command is missing. Reinstall the cask before resuming.' >&2; exit 1; }
 # Resolve the stable installed launcher again, never a Caskroom version path.
 /bin/sh "$host" upgrade resume
