@@ -2,9 +2,9 @@
 cask "sim-relay" do
   arch arm: "arm64", intel: "x64"
 
-  version "0.2.2"
-  sha256 arm:   "ee4ed06509172aa7f0e58a1404bc4cc1a3f37827a579d836e2a785c6f7ac9fe9",
-         intel: "843dda0ea5069576218c2f277991bbd0d6c20f4885ba4c88c5292bd99c675b09"
+  version "0.2.3"
+  sha256 arm:   "088e4cd45033fa8da470ad55591d243fa9a4a7b98da50ab894b2394f8e08c807",
+         intel: "017f15ee663ca07797df4fbff84afc38f75f3c600e6e84088dba2b98031f77b8"
 
   url "https://github.com/Nailington/sim-relay/releases/download/v#{version}/Sim-Relay-#{version}-mac-#{arch}.dmg"
   name "Sim Relay"
@@ -32,5 +32,5 @@ cask "sim-relay" do
     "~/Library/Logs/Sim Relay",
   ]
 
-  caveats "Requires macOS 13.5 or newer. Use sim-relay-upgrade for background-host upgrades. See https://github.com/Nailington/sim-relay/blob/v0.2.2/docs/macos.md"
+  caveats "Requires macOS 13.5 or newer. Use sim-relay-upgrade for background-host upgrades. See https://github.com/Nailington/sim-relay/blob/v0.2.3/docs/macos.md"
 end
